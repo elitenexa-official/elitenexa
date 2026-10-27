@@ -1,5 +1,5 @@
 """End-to-end test + screenshots for the local EliteNexa app. Usage: python3 scripts/e2e_test.py [base_url]"""
-import re, sys, os, subprocess
+import re, sys, os, subprocess, json
 from playwright.sync_api import sync_playwright
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:3100'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,10 +17,11 @@ with sync_playwright() as p:
     def ctx(): 
         c = b.new_context(viewport={'width': 1366, 'height': 860}); pg = c.new_page()
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e))); pg.errs = errs; return pg
-    def signup(pg, name, email, ref=None, userid=None):
+    def signup(pg, name, email, ref=None, userid=None, country=None):
         pg.goto(BASE + '/signup' + (f'?ref={ref}' if ref else ''))
         userid = userid or email.split('@')[0]
         pg.fill('[name=name]', name); pg.fill('[name=userid]', userid); pg.fill('[name=email]', email); pg.fill('[name=phone]', '9876543210')
+        if country: pg.select_option('#country', country)
         pg.fill('[name=password]', 'Test12345'); pg.fill('[name=password2]', 'Test12345'); pg.check('[name=agree]')
         pg.click('button:has-text("Create free account")')
         try: pg.wait_for_url('**/dashboard', timeout=15000)
@@ -45,7 +46,7 @@ with sync_playwright() as p:
     check('mobile: no horizontal overflow', m.evaluate('document.documentElement.scrollWidth') <= 391)
     m.screenshot(path=f'{SHOTS}/03-homepage-mobile.png', full_page=False)
     pub.goto(BASE + '/login'); pub.wait_for_load_state('networkidle')
-    check('login form asks for "User ID or Email"', 'User ID or Email' in pub.inner_text('form'))
+    check('login form asks for "User ID or Email"', 'User ID or Email' in pub.inner_text('main form'))
     pub.screenshot(path=f'{SHOTS}/11-login.png')
     pub.goto(BASE + '/signup'); pub.wait_for_load_state('networkidle')
     check('signup form has User ID + password + confirm', pub.locator('[name=userid]').count() == 1 and pub.locator('[name=password]').count() == 1 and pub.locator('[name=password2]').count() == 1)
@@ -187,11 +188,11 @@ with sync_playwright() as p:
     AD.goto(BASE + '/admin/members?q=' + codeC); cid = re.search(r'member=(\d+)', AD.locator('a[href*="/admin/wallet?member="]').first.get_attribute('href')).group(1)
     AD.goto(BASE + f'/admin/wallet?member={cid}'); AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '800'); AD.fill('[name=reason]', 'Test credit for PayPal withdrawal flow'); AD.click('button:has-text("Apply adjustment")'); AD.wait_for_load_state()
     C.goto(BASE + '/wallet'); cbal = balance(C)
-    check('wallet form has PayPal option + country list', C.locator('select[name=payout_method] option[value=paypal]').count() == 1 and C.locator('select[name=country] option', has_text='South Africa').count() == 1 and C.locator('select[name=country] option', has_text='India').count() == 1)
+    check('wallet form has PayPal option + country list', C.locator('select[name=payout_method] option[value=paypal]').count() == 1 and C.locator('select#payout_country option', has_text='South Africa').count() == 1 and C.locator('select#payout_country option', has_text='India').count() == 1)
     C.select_option('[name=payout_method]', 'paypal'); check('PayPal fee/currency note shown', C.locator('#paypal-fee-note').is_visible() and 'currency conversion' in C.inner_text('#paypal-fee-note'))
-    C.fill('[name=amount]', '600'); C.evaluate("document.querySelector('[name=paypal_email]').type='text'"); C.fill('[name=paypal_email]', 'not-an-email'); C.select_option('[name=country]', 'South Africa'); C.click('button:has-text("Submit request")')
+    C.fill('[name=amount]', '600'); C.evaluate("document.querySelector('[name=paypal_email]').type='text'"); C.fill('[name=paypal_email]', 'not-an-email'); C.select_option('#payout_country', 'South Africa'); C.click('button:has-text("Submit request")')
     check('invalid PayPal email rejected', 'valid PayPal email' in C.inner_text('.alert'))
-    C.select_option('[name=payout_method]', 'paypal'); C.fill('[name=amount]', '600'); C.fill('[name=paypal_email]', f'meena{run}@paypal-test.example'); C.select_option('[name=country]', 'South Africa'); C.click('button:has-text("Submit request")')
+    C.select_option('[name=payout_method]', 'paypal'); C.fill('[name=amount]', '600'); C.fill('[name=paypal_email]', f'meena{run}@paypal-test.example'); C.select_option('#payout_country', 'South Africa'); C.click('button:has-text("Submit request")')
     check('PayPal withdrawal submitted + held', 'submitted' in C.inner_text('.alert') and abs(balance(C) - (cbal - 600)) < 0.01)
     MG.goto(BASE + '/admin/withdrawals'); check('approval page shows payout note', 'Pay the member from your PayPal/bank first, then enter the transaction ID here. The site does not send money itself.' in MG.inner_text('#payout-note'))
     wrow = MG.locator('tr', has_text=f'meena{run}@paypal-test.example').first
@@ -206,6 +207,82 @@ with sync_playwright() as p:
     MG.goto(BASE + '/admin/withdrawals'); MG.wait_for_load_state('networkidle'); MG.screenshot(path=f'{SHOTS}/14-manager-withdrawals.png', full_page=True)
     AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main')
     check('audit log records manager actions with username', f'by manager {mguid}' in au and 'PPTX9AB12345' in au and 'manager created' in au)
+
+    # ---------- multi-country / currency ----------
+    AD.goto(BASE + '/admin/currencies'); check('admin opens currencies page', AD.locator('#currency-table tr[data-code=ZAR]').count() == 1 and 'set by admin and approximate' in AD.inner_text('main'))
+    check('currencies page shows INR base + last updated', 'base' in AD.locator('tr[data-code=INR]').inner_text().lower() and re.search(r'\d{4}', AD.locator('tr[data-code=ZAR] td').nth(6).inner_text()) is not None)
+    zar = float(AD.locator('tr[data-code=ZAR] input[name=rate_per_inr]').input_value())
+    V = ctx(); V.goto(BASE + '/products'); p_inr = V.locator('.price').first.inner_text()
+    check('default country India: ₹ prices + INR badge', p_inr.startswith('₹') and V.inner_text('#cur-badge') == 'INR' and V.locator('#country-select option:checked').inner_text().endswith('India'))
+    check('India footer keeps Direct Selling Rules 2021 note', 'Direct Selling) Rules, 2021 (India)' in V.inner_text('footer') and V.locator('#footer-country-note').count() == 0)
+    with V.expect_navigation(): V.select_option('#country-select', 'South Africa')
+    p_zar = V.locator('.price').first.inner_text()
+    check('visitor switches to South Africa: prices in R (converted)', p_zar.startswith('R') and abs(money(p_zar) - round(money(p_inr) * zar, 2)) < 0.011 and V.inner_text('#cur-badge') == 'ZAR', f'{p_inr} -> {p_zar} @ {zar}')
+    check('visitor country stored in cookie', any(c['name'] == 'enx_country' and 'South' in c['value'] for c in V.context.cookies()))
+    check('non-India footer note', 'Direct selling rules differ by country; check your local regulations before joining.' in V.inner_text('#footer-country-note'))
+    V.goto(BASE + '/income-plan'); ip = V.inner_text('main')
+    check('income plan: country note + amounts in R', 'Direct selling rules differ by country; check your local regulations before joining.' in V.inner_text('#country-note') and f'on a r{1000*zar:,.2f} sale' in ip.lower(), ip[:80])
+    with V.expect_navigation(): V.select_option('#country-select', 'United Kingdom')
+    check('switch to United Kingdom shows £', V.inner_text('#cur-badge') == 'GBP' and '£' in V.inner_text('main'))
+    with V.expect_navigation(): V.select_option('#country-select', 'India')
+    V.goto(BASE + '/products'); check('switch back to India restores ₹ (INR unchanged)', V.locator('.price').first.inner_text() == p_inr and V.inner_text('#cur-badge') == 'INR')
+    r = V.request.post(BASE + '/country', form={'country': 'South Africa'}, max_redirects=0); check('POST /country without CSRF -> 403', r.status == 403, r.status)
+    vt = V.locator('input[name=_csrf]').first.input_value()
+    r = V.request.post(BASE + '/country', form={'_csrf': vt, 'country': 'South Africa', 'back': '//evil.example/x'}, max_redirects=0)
+    check('POST /country refuses open redirect', r.status == 302 and r.headers.get('location') == '/', r.headers.get('location'))
+    with V.expect_navigation(): V.select_option('#country-select', 'India')
+
+    # South Africa member: signup with country, ZAR withdrawal converted to INR with rate stored
+    D = ctx(); codeD = signup(D, 'Thabo Nkosi', f'thabo{run}@example.com', country='South Africa')
+    D.goto(BASE + '/dashboard'); check('ZA member: dashboard in R', 'R0.00' in D.inner_text('main') and D.inner_text('#cur-badge') == 'ZAR')
+    D.context.add_cookies([{'name': 'enx_country', 'value': 'India', 'url': BASE}]); D.goto(BASE + '/dashboard')
+    check("member's saved country wins over cookie", D.inner_text('#cur-badge') == 'ZAR')
+    D.goto(BASE + '/profile'); check('profile shows saved country', D.locator('#country option:checked').inner_text().endswith('South Africa'))
+    D.select_option('#country', 'United Kingdom'); D.click('button:has-text("Save profile")'); D.wait_for_load_state()
+    check('profile country change -> £', D.inner_text('#cur-badge') == 'GBP')
+    D.goto(BASE + '/profile'); D.select_option('#country', 'South Africa'); D.click('button:has-text("Save profile")'); D.wait_for_load_state()
+    AD.goto(BASE + '/admin/members?q=' + codeD); did = re.search(r'member=(\d+)', AD.locator('a[href*="/admin/wallet?member="]').first.get_attribute('href')).group(1)
+    AD.goto(BASE + f'/admin/wallet?member={did}'); AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '1000'); AD.fill('[name=reason]', 'Test credit for ZAR withdrawal flow'); AD.click('button:has-text("Apply adjustment")'); AD.wait_for_load_state()
+    check('admin wallet page stays in ₹', '₹1,000.00' in AD.inner_text('main'))
+    dbal = balance(D); check('ZA member wallet balance shown in R', D.inner_text('.stat.big b').startswith('R') and abs(dbal - round(1000 * zar, 2)) < 0.011 and '≈ ₹1,000.00' in D.inner_text('.stat.big'), f'{dbal}')
+    check('withdraw form amount in ZAR', 'ZAR' in D.inner_text('label:has(#wd_amount)') and D.locator('select#payout_country option:checked').inner_text() == 'South Africa')
+    D.fill('#wd_amount', '150'); exp_paise = round(150 / zar * 100); exp_inr = f'₹{exp_paise/100:,.2f}'
+    check('live ≈ ₹ hint on withdrawal', D.inner_text('#wd_inr_hint') == '≈ ' + exp_inr, D.inner_text('#wd_inr_hint'))
+    D.select_option('[name=payout_method]', 'bank_upi'); D.fill('[name=payout_details]', f'FNB acct ZA{run} branch 250655'); D.click('button:has-text("Submit request")'); D.wait_for_load_state()
+    check('ZAR withdrawal submitted', 'submitted' in D.inner_text('.alert'), D.inner_text('.alert')[:100])
+    dbal2 = balance(D); check('held amount = converted INR', abs(dbal2 - round((100000 - exp_paise) / 100 * zar, 2)) < 0.011, f'{dbal2}')
+    check('member sees requested R150.00', 'R150.00' in D.inner_text('main'))
+    MG.goto(BASE + '/admin/withdrawals'); wz = MG.locator('tr', has_text=f'ZA{run}').first; wzt = wz.inner_text()
+    check('approval page shows INR + requested ZAR + rate', exp_inr in wzt and 'Requested R150.00' in wzt and f'1 INR = {zar:g} ZAR' in wzt, wzt[:200])
+    wz.locator('[name=reference]').fill('UTRZA' + run[-6:]); wz.locator('button[value=approve]').click(); MG.wait_for_load_state()
+    check('manager approved ZAR withdrawal', 'approved' in MG.inner_text('.alert'))
+    DBF = os.environ.get('E2E_DB') or (os.path.join(ROOT, 'data', 'elitenexa.db') if BASE.startswith('http://127.0.0.1:3100') else '')
+    if DBF and os.path.isfile(DBF):
+        row = subprocess.run(['node', '-e', "const d=require('better-sqlite3')(process.argv[1],{readonly:true});process.stdout.write(JSON.stringify(d.prepare('SELECT w.amount_paise,w.req_currency,w.req_amount,w.fx_rate,w.status FROM withdrawals w JOIN users u ON u.id=w.user_id WHERE u.email=? ORDER BY w.id DESC').get(process.argv[2])))", DBF, f'thabo{run}@example.com'], capture_output=True, text=True, cwd=ROOT).stdout
+        j = json.loads(row or '{}'); check('DB stores INR paise + ZAR amount + rate', j.get('amount_paise') == exp_paise and j.get('req_currency') == 'ZAR' and j.get('req_amount') == 150 and abs(j.get('fx_rate', 0) - zar) < 1e-12 and j.get('status') == 'approved', row)
+    # managers: no access to currencies
+    r = MG.goto(BASE + '/admin/currencies'); check('manager GET /admin/currencies -> 403', r.status == 403, r.status)
+    MG.goto(BASE + '/admin'); mtok2 = MG.locator('input[name=_csrf]').first.input_value()
+    r = MG.request.post(BASE + '/admin/currencies/ZAR', form={'_csrf': mtok2, 'rate_per_inr': '9', 'enabled': '1'}, max_redirects=0); check('manager POST /admin/currencies -> 403', r.status == 403, r.status)
+    check('manager sidebar has no Currencies link', 'Currencies' not in MG.inner_text('aside.side'))
+    # admin edits rate (audited), disables/enables, then restores
+    AD.goto(BASE + '/admin/currencies'); zr = AD.locator('tr[data-code=ZAR]'); zr.locator('input[name=rate_per_inr]').fill('0.25'); zr.locator('button:has-text("Save")').click(); AD.wait_for_load_state()
+    check('admin updates ZAR rate', 'ZAR updated' in AD.inner_text('.alert') and AD.locator('tr[data-code=ZAR] input[name=rate_per_inr]').input_value() == '0.25')
+    V.goto(BASE + '/products')
+    with V.expect_navigation(): V.select_option('#country-select', 'South Africa')
+    check('new rate used for display', abs(money(V.locator('.price').first.inner_text()) - round(money(p_inr) * 0.25, 2)) < 0.011)
+    AD.goto(BASE + '/admin/currencies'); zr = AD.locator('tr[data-code=ZAR]'); zr.locator('input[name=enabled]').uncheck(); zr.locator('button:has-text("Save")').click(); AD.wait_for_load_state()
+    V.goto(BASE + '/products'); check('disabled currency falls back to ₹', V.locator('.price').first.inner_text() == p_inr)
+    AD.goto(BASE + '/admin/currencies'); zr = AD.locator('tr[data-code=ZAR]'); zr.locator('input[name=rate_per_inr]').fill(f'{zar:g}'); zr.locator('input[name=enabled]').check(); zr.locator('button:has-text("Save")').click(); AD.wait_for_load_state()
+    check('ZAR rate restored + re-enabled', AD.locator('tr[data-code=ZAR] input[name=rate_per_inr]').input_value() == f'{zar:g}' and AD.locator('tr[data-code=ZAR] input[name=enabled]').is_checked())
+    atok = AD.locator('input[name=_csrf]').first.input_value()
+    AD.request.post(BASE + '/admin/currencies/ZAR', form={'_csrf': atok, 'rate_per_inr': '-1', 'enabled': '1'}); AD.request.post(BASE + '/admin/currencies/INR', form={'_csrf': atok, 'rate_per_inr': '2', 'enabled': '1'})
+    AD.goto(BASE + '/admin/currencies'); check('invalid rate + INR edit refused', AD.locator('tr[data-code=ZAR] input[name=rate_per_inr]').input_value() == f'{zar:g}' and '1 (fixed)' in AD.locator('tr[data-code=INR]').inner_text())
+    AD.screenshot(path=f'{SHOTS}/16-admin-currencies.png', full_page=True)
+    AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main')
+    check('currency changes audit-logged', 'currency updated' in au and 'ZAR: rate (per 1 INR) ' + f'{zar:g} → 0.25' in au and 'enabled yes → no' in au, au[:200])
+    A.goto(BASE + '/wallet'); check('India member still sees ₹ (INR unchanged)', A.inner_text('.stat.big b').startswith('₹') and A.locator('#wd_inr_hint').count() == 0)
+    D.goto(BASE + '/wallet'); D.wait_for_load_state('networkidle'); D.screenshot(path=f'{SHOTS}/17-za-member-wallet.png', full_page=True)
 
     # disable / reset manager
     AD.goto(BASE + '/admin/managers'); AD.locator(f'.manager-row[data-manager="{mguid}"] button:has-text("Disable")').click(); AD.wait_for_load_state()
@@ -326,7 +403,7 @@ with sync_playwright() as p:
         ver = subprocess.run(['node', '-e', 'process.stdout.write(String(require("bcryptjs").compareSync(process.argv[1], process.argv[2])))', 'HashTestPass2026', h], capture_output=True, text=True, cwd=ROOT).stdout
         check('setup-hash output verifies with bcrypt', ver == 'true', ver)
         L7 = ctx(); login(L7, 'admin', ADMIN_PW); check('setup-hash did not change admin password', L7.url.endswith('/admin'))
-    allerrs = sum([x.errs for x in (pub, A, B, C, AD, MG)], [])
+    allerrs = sum([x.errs for x in (pub, A, B, C, AD, MG, V, D)], [])
     check('no JS page errors', not allerrs, str(allerrs[:3]))
     b.close()
 

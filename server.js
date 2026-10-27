@@ -8,6 +8,7 @@ const SqliteStore = require('better-sqlite3-session-store')(session);
 const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const D = require('./db');
+const CUR = require('./currency');
 const { db } = D;
 
 const PORT = Number(process.env.PORT) || 3100;
@@ -62,8 +63,12 @@ const clean = (v, max = 500) => String(v == null ? '' : v).trim().slice(0, max);
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const fmtDate = (s) => s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST' : '';
 const pwError = (pw, min = 8) => pw.length < min ? `Password must be at least ${min} characters.` : (pw.length > 128 ? 'Password is too long (max 128 characters).' : null);
-const PAYOUT_COUNTRIES = ['India', 'South Africa', 'United Arab Emirates', 'United States', 'United Kingdom', 'Canada', 'Australia', 'Singapore', 'Malaysia', 'Nepal', 'Bangladesh', 'Sri Lanka', 'Nigeria', 'Kenya', 'Other'];
+const PAYOUT_COUNTRIES = CUR.COUNTRY_NAMES;
 const PAYOUT_METHODS = { bank_upi: 'Bank / UPI', paypal: 'PayPal' };
+function readCookie(req, name) {
+  const m = String(req.headers.cookie || '').split(/;\s*/).find(c => c.startsWith(name + '='));
+  if (!m) return null; try { return decodeURIComponent(m.slice(name.length + 1)); } catch (_) { return null; }
+}
 function flash(req, type, msg) { req.session.flash = { type, msg }; }
 
 app.use((req, res, next) => { if (!req.session.csrf) req.session.csrf = crypto.randomBytes(24).toString('hex'); next(); });
@@ -72,7 +77,7 @@ app.use((req, res, next) => { if (!req.session.csrf) req.session.csrf = crypto.r
 app.use((req, res, next) => {
   res.locals.user = null;
   if (req.session.uid) {
-    const u = db.prepare('SELECT id, name, email, username, phone, role, referral_code, sponsor_id, status, created_at FROM users WHERE id=?').get(req.session.uid);
+    const u = db.prepare('SELECT id, name, email, username, phone, country, role, referral_code, sponsor_id, status, created_at FROM users WHERE id=?').get(req.session.uid);
     if (!u || u.status !== 'active') { req.session.uid = null; } else { req.user = u; res.locals.user = u; }
   }
   res.locals.csrf = req.session.csrf;
@@ -80,6 +85,16 @@ app.use((req, res, next) => {
   res.locals.DEMO_MODE = process.env.DEMO_MODE === '1'; res.locals.ADMIN_PW_FROM_ENV = D.ADMIN_PW_FROM_ENV; res.locals.ADMIN_PW_SOURCE = D.ADMIN_PW_SOURCE;
   res.locals.isStaff = isStaff(res.locals.user); res.locals.isManager = !!res.locals.user && res.locals.user.role === 'manager';
   res.locals.PAYOUT_COUNTRIES = PAYOUT_COUNTRIES;
+  // Country + display currency: a member's saved country wins over the visitor cookie; default India.
+  const ck = readCookie(req, 'enx_country');
+  const country = (req.user && req.user.role === 'member' && CUR.validCountry(req.user.country)) ? req.user.country : (CUR.validCountry(ck) ? ck : CUR.DEFAULT_COUNTRY);
+  const cur = CUR.currencyForCountry(country);
+  req.country = country; req.cur = cur;
+  res.locals.country = country; res.locals.countryInfo = CUR.countryInfo(country); res.locals.COUNTRIES = CUR.COUNTRIES;
+  res.locals.cur = cur; res.locals.isIndia = country === 'India';
+  res.locals.money = CUR.formatter(cur);                                   // INR paise -> visitor's currency
+  res.locals.inrHint = (paise) => cur.code === 'INR' ? '' : `≈ ${inr(paise)}`; // small "≈ ₹X" hint
+  res.locals.fmtCur = (amount, code) => CUR.fmt(Number(amount || 0), CUR.getCurrency(code) || CUR.getCurrency('INR'));
   res.locals.inr = inr; res.locals.fmtDate = fmtDate; res.locals.path = req.path; res.locals.BRAND = BRAND;
   res.locals.baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
   next();
@@ -137,14 +152,26 @@ app.get('/signup', (req, res) => {
   const sponsor = ref ? findSponsor(ref) : null;
   res.render('signup', { title: 'Join free', form: { ref }, sponsor });
 });
+// Country / currency selector (header + anywhere). Visitors: cookie. Members: also saved to their profile.
+app.post('/country', (req, res) => {
+  const c = clean(req.body.country, 60);
+  const back = clean(req.body.back, 300);
+  const safeBack = back.startsWith('/') && !back.startsWith('//') && !back.startsWith('/\\') ? back : '/';
+  if (CUR.validCountry(c)) {
+    res.cookie('enx_country', c, { maxAge: 365 * 24 * 3600 * 1000, sameSite: 'lax', httpOnly: true, secure: req.secure });
+    if (req.user && req.user.role === 'member') db.prepare('UPDATE users SET country=? WHERE id=?').run(c, req.user.id);
+  }
+  res.redirect(safeBack);
+});
 app.post('/signup', (req, res) => {
-  const form = { name: clean(req.body.name, 100), userid: clean(req.body.userid, 40), email: clean(req.body.email, 200).toLowerCase(), phone: clean(req.body.phone, 20), ref: clean(req.body.ref, 20) };
+  const form = { name: clean(req.body.name, 100), userid: clean(req.body.userid, 40), email: clean(req.body.email, 200).toLowerCase(), phone: clean(req.body.phone, 20), ref: clean(req.body.ref, 20), country: clean(req.body.country, 60) || req.country };
   const pw = String(req.body.password || ''), pw2 = String(req.body.password2 || '');
   const errs = [];
   if (form.name.length < 2) errs.push('Please enter your full name.');
   const uidErr = D.validateUserId(form.userid); if (uidErr) errs.push(uidErr);
   if (!EMAIL_RE.test(form.email)) errs.push('Please enter a valid email address.');
   if (form.phone && !/^[+0-9 \-]{8,16}$/.test(form.phone)) errs.push('Phone number looks invalid.');
+  if (!CUR.validCountry(form.country)) errs.push('Please choose your country from the list.');
   const pe = pwError(pw); if (pe) errs.push(pe);
   if (pw !== pw2) errs.push('Passwords do not match.');
   if (!req.body.agree) errs.push('Please accept the Terms and read the Income Plan & disclaimer.');
@@ -157,8 +184,8 @@ app.post('/signup', (req, res) => {
   if (errs.length) return res.status(400).render('signup', { title: 'Join free', form, sponsor, error: errs.join(' ') });
   let info;
   try {
-    info = db.prepare('INSERT INTO users(name,username,email,phone,password_hash,referral_code,sponsor_id) VALUES (?,?,?,?,?,?,?)')
-      .run(form.name, form.userid, form.email, form.phone || null, bcrypt.hashSync(pw, 12), D.newReferralCode(), sponsor ? sponsor.id : null);
+    info = db.prepare('INSERT INTO users(name,username,email,phone,country,password_hash,referral_code,sponsor_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(form.name, form.userid, form.email, form.phone || null, form.country, bcrypt.hashSync(pw, 12), D.newReferralCode(), sponsor ? sponsor.id : null);
   } catch (e) {
     if (String(e.code).startsWith('SQLITE_CONSTRAINT')) return res.status(400).render('signup', { title: 'Join free', form, sponsor, error: 'This User ID or email was just taken. Please choose another.' });
     throw e;
@@ -212,9 +239,10 @@ m.get('/dashboard', (req, res) => {
 });
 m.get('/profile', (req, res) => res.render('member/profile', { title: 'My profile' }));
 m.post('/profile', (req, res) => {
-  const name = clean(req.body.name, 100), phone = clean(req.body.phone, 20);
+  const name = clean(req.body.name, 100), phone = clean(req.body.phone, 20), country = clean(req.body.country, 60) || req.country;
   if (name.length < 2 || (phone && !/^[+0-9 \-]{8,16}$/.test(phone))) { flash(req, 'err', 'Please enter a valid name and phone.'); return res.redirect('/profile'); }
-  db.prepare('UPDATE users SET name=?, phone=? WHERE id=?').run(name, phone || null, req.user.id);
+  if (!CUR.validCountry(country)) { flash(req, 'err', 'Please choose your country from the list.'); return res.redirect('/profile'); }
+  db.prepare('UPDATE users SET name=?, phone=?, country=? WHERE id=?').run(name, phone || null, country, req.user.id);
   flash(req, 'ok', 'Profile updated.'); res.redirect('/profile');
 });
 // Shared change-password handler (member: min 8 chars, admin: min 12 chars)
@@ -272,23 +300,31 @@ m.get('/wallet', (req, res) => {
   res.render('member/wallet', { title: 'My wallet', ...sum, ledger, withdrawals });
 });
 m.post('/wallet/withdraw', (req, res) => {
-  const amt = toPaise(req.body.amount);
+  // Member types the amount in their display currency; it is converted to INR (base) at the current rate.
+  const cur = req.cur, money = CUR.formatter(cur);
+  const reqAmt = Number(String(req.body.amount || '').replace(/,/g, '').trim());
+  const f = Math.pow(10, cur.decimals);
+  const reqAmount = Number.isFinite(reqAmt) ? Math.round(reqAmt * f) / f : NaN;
+  let amt = Number.isFinite(reqAmount) && reqAmount > 0 ? CUR.toINRPaise(reqAmount, cur) : NaN;
+  // rounding tolerance: asking for the displayed full balance must not fail by a fraction of a paisa
+  const bal0 = D.balance(req.user.id);
+  if (Number.isInteger(amt) && amt > bal0 && cur.code !== 'INR' && amt - bal0 <= Math.ceil(100 / (cur.rate_per_inr * f))) amt = bal0;
   const method = req.body.payout_method === 'paypal' ? 'paypal' : 'bank_upi';
   const paypal = method === 'paypal' ? clean(req.body.paypal_email, 200).toLowerCase() : null;
   const country = clean(req.body.country, 60) || 'India';
   const details = method === 'paypal' ? `PayPal: ${paypal}` : clean(req.body.payout_details, 300);
   const s = D.getSettings();
   if (!Number.isInteger(amt) || amt <= 0) { flash(req, 'err', 'Enter a valid amount.'); return res.redirect('/wallet'); }
-  if (amt < s.min_withdrawal_rupees * 100) { flash(req, 'err', `Minimum withdrawal is ${inr(s.min_withdrawal_rupees * 100)}.`); return res.redirect('/wallet'); }
+  if (amt < s.min_withdrawal_rupees * 100) { flash(req, 'err', `Minimum withdrawal is ${money(s.min_withdrawal_rupees * 100)}${cur.code === 'INR' ? '' : ' (≈ ' + inr(s.min_withdrawal_rupees * 100) + ')'}.`); return res.redirect('/wallet'); }
   if (!PAYOUT_COUNTRIES.includes(country)) { flash(req, 'err', 'Please choose your country from the list.'); return res.redirect('/wallet'); }
   if (method === 'paypal' && !EMAIL_RE.test(paypal)) { flash(req, 'err', 'Enter a valid PayPal email address (your own PayPal account).'); return res.redirect('/wallet'); }
   if (method === 'bank_upi' && details.length < 5) { flash(req, 'err', 'Enter your UPI ID or bank account details for payout.'); return res.redirect('/wallet'); }
   try {
     db.transaction(() => {
       if (D.balance(req.user.id) < amt) throw new Error('Amount is more than your available balance.');
-      const wid = db.prepare('INSERT INTO withdrawals(user_id, amount_paise, payout_details, payout_method, paypal_email, country) VALUES (?,?,?,?,?,?)').run(req.user.id, amt, details, method, paypal, country).lastInsertRowid;
+      const wid = db.prepare('INSERT INTO withdrawals(user_id, amount_paise, payout_details, payout_method, paypal_email, country, req_currency, req_amount, fx_rate) VALUES (?,?,?,?,?,?,?,?,?)').run(req.user.id, amt, details, method, paypal, country, cur.code, reqAmount, cur.rate_per_inr).lastInsertRowid;
       db.prepare("INSERT INTO wallet_ledger(user_id, amount_paise, type, reason, withdrawal_id) VALUES (?,?, 'withdrawal_hold', ?, ?)")
-        .run(req.user.id, -amt, `Withdrawal request #${wid} (amount on hold until processed)`, wid);
+        .run(req.user.id, -amt, `Withdrawal request #${wid} (amount on hold until processed)${cur.code === 'INR' ? '' : ` – requested ${CUR.fmt(reqAmount, cur)} at 1 INR = ${cur.rate_per_inr} ${cur.code}`}`, wid);
     })();
     flash(req, 'ok', 'Withdrawal request submitted. You will be notified once it is processed.');
   } catch (e) { flash(req, 'err', e.message); }
@@ -309,6 +345,7 @@ a.use((req, res, next) => {
   if (req.user.role === 'manager' && MANAGER_ALLOWED.some(([m, re]) => m === req.method && re.test(req.path))) return next();
   return forbidden(res);
 });
+a.use((req, res, next) => { res.locals.money = inr; res.locals.inrHint = () => ''; next(); }); // staff area: base currency (INR)
 a.get('/', (req, res) => {
   const q = (sql, ...p) => db.prepare(sql).get(...p);
   const stats = {
@@ -447,7 +484,7 @@ a.post('/withdrawals/:id', (req, res) => {
         const refLabel = w.payout_method === 'paypal' ? 'PayPal transaction ID' : 'UTR';
         if (note.length < 3) throw new Error(`Enter the ${refLabel} of the payment you made before approving.`);
         db.prepare("UPDATE withdrawals SET status='approved', admin_note=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(`${refLabel}: ${note}`, req.user.id, id);
-        D.audit(req.user.id, 'withdrawal_approved', w.user_id, `Withdrawal #${id} ${inr(w.amount_paise)} approved by ${req.user.role} ${req.user.username}. Method: ${PAYOUT_METHODS[w.payout_method] || w.payout_method}${w.paypal_email ? ' (' + w.paypal_email + ')' : ''}, country: ${w.country}. ${refLabel}: ${note}`);
+        D.audit(req.user.id, 'withdrawal_approved', w.user_id, `Withdrawal #${id} ${inr(w.amount_paise)} approved by ${req.user.role} ${req.user.username}.${w.req_currency && w.req_currency !== 'INR' ? ` Requested ${w.req_amount} ${w.req_currency} @ ${w.fx_rate}/INR.` : ''} Method: ${PAYOUT_METHODS[w.payout_method] || w.payout_method}${w.paypal_email ? ' (' + w.paypal_email + ')' : ''}, country: ${w.country}. ${refLabel}: ${note}`);
       } else if (action === 'reject') {
         if (note.length < 3) throw new Error('Enter a reason when rejecting.');
         db.prepare("UPDATE withdrawals SET status='rejected', admin_note=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(note, req.user.id, id);
@@ -486,6 +523,21 @@ a.get('/audit', (req, res) => {
   const rows = db.prepare('SELECT l.*, a.username AS admin, a.role AS admin_role, t.name AS target, t.email AS target_email FROM audit_log l LEFT JOIN users a ON a.id=l.admin_id LEFT JOIN users t ON t.id=l.target_user_id ORDER BY l.id DESC LIMIT 500').all();
   res.render('admin/audit', { title: 'Audit log', rows });
 });
+// ---------- Currencies (admin only; managers get 403 from the guard above) ----------
+a.get('/currencies', (req, res) => res.render('admin/currencies', { title: 'Currencies', currencies: CUR.allCurrencies(), countries: CUR.COUNTRIES }));
+a.post('/currencies/:code', (req, res) => {
+  const c = CUR.getCurrency(String(req.params.code || '').toUpperCase());
+  if (!c) { flash(req, 'err', 'Currency not found.'); return res.redirect('/admin/currencies'); }
+  if (c.code === 'INR') { flash(req, 'err', 'INR is the base currency: its rate is always 1 and it cannot be disabled.'); return res.redirect('/admin/currencies'); }
+  const rate = Number(String(req.body.rate_per_inr || '').trim()), enabled = req.body.enabled ? 1 : 0;
+  const symbol = clean(req.body.symbol, 6) || c.symbol;
+  if (!Number.isFinite(rate) || rate <= 0 || rate > 100000) { flash(req, 'err', `${c.code}: enter a valid rate (units of ${c.code} for 1 INR).`); return res.redirect('/admin/currencies'); }
+  db.prepare("UPDATE currencies SET rate_per_inr=?, enabled=?, symbol=?, updated_at=datetime('now') WHERE code=?").run(rate, enabled, symbol, c.code);
+  D.audit(req.user.id, 'currency_updated', null, `${c.code}: rate (per 1 INR) ${c.rate_per_inr} → ${rate}; enabled ${c.enabled ? 'yes' : 'no'} → ${enabled ? 'yes' : 'no'}; symbol "${c.symbol}" → "${symbol}"`);
+  flash(req, 'ok', `${c.code} updated: 1 INR = ${rate} ${c.code}${enabled ? '' : ' (disabled – its countries now see INR)'}.`);
+  res.redirect('/admin/currencies');
+});
+
 // ---------- Approval Managers (admin only) ----------
 const managerList = () => db.prepare("SELECT id, name, username, status, created_at FROM users WHERE role='manager' ORDER BY id").all();
 const renderManagers = (res, extra = {}, code = 200) => res.status(code).render('admin/managers', { title: 'Approval Managers', managers: managerList(), form: {}, error: null, ...extra });

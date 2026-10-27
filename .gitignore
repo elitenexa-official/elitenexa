@@ -11,3 +11,4 @@ ADMIN_CREDENTIALS.txt
 *.log
 screenshots/
 .DS_Store
+__pycache__/

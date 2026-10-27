@@ -38,6 +38,14 @@ Environment variables:
 ## Payouts (withdrawals)
 Members request a withdrawal to **their own** account: **Bank / UPI** (UPI ID or A/c + IFSC) or **PayPal** (PayPal email, validated) plus their **country** (India, South Africa, UAE, US, UK, … , Other). The amount is held in the ledger until processed. The approval page shows method, PayPal email and country, and approving requires the **UTR** (bank/UPI) or the **PayPal transaction ID**. The site never sends money: pay the member from your PayPal/bank first, then record the reference. Members see a note that international PayPal payouts may include PayPal fees and currency conversion. Member-to-member transfers remain impossible.
 
+## Countries & currencies
+- **Base currency is INR.** Orders, commissions, wallet balances and payouts are stored and calculated in INR paise; commission maths is unchanged.
+- **Country selector** in the header (flag + name). Visitors: saved in the `enx_country` cookie (1 year). Members: saved on their profile (`users.country`; also asked on signup and editable on *Profile*). A member's saved country wins over the cookie. Default: India. Countries without their own currency ("Other") use USD; a disabled currency falls back to INR.
+- **Display:** every public/member amount uses the `money(paise)` helper, converted at the admin-set rate. Checkout (shop, orders) and wallet/withdrawal pages also show a small "≈ ₹X" hint for non-INR currencies. Admin pages always show INR.
+- **Withdrawals:** a member types the amount in their own currency; the server converts it to INR at the current rate and stores the INR amount plus `req_currency`, `req_amount` and `fx_rate`. The approval page (admin/manager) shows both.
+- **Admin → Currencies** (`/admin/currencies`, admin only, managers get 403): edit rates (units per 1 INR), symbols, enable/disable, with last-updated time. Every change is audit-logged. Seeded rates (INR, ZAR, USD, GBP, EUR, AED, CAD, AUD, SGD, MYR, NPR, BDT, LKR, NGN, KES) are **approximate and set by admin**. Update them regularly from a reliable source.
+- **Legal note by country:** India shows the Consumer Protection (Direct Selling) Rules, 2021 note. Other countries see "Direct selling rules differ by country; check your local regulations before joining." (Income Plan page + footer).
+
 ## Features
 - **Public:** Home, Products, Income Plan (+ disclaimer), About, Contact (messages saved for admin), Signup (optional referral code / `?ref=CODE` link), Login.
 - **Member:** dashboard (wallet, personal/team sales volume, rank progress, referral link), profile & password, place order (stays *pending* until admin marks paid), my orders, my team (downline up to configured depth with each member's paid sales volume), wallet ledger with reason for every entry, withdrawal request to own Bank/UPI or PayPal with country (amount held until processed).

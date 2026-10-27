@@ -11,7 +11,8 @@
     <div><h4>Opportunity</h4><a href="/income-plan">Income Plan</a><a href="/income-plan#disclaimer">Income disclaimer</a><a href="/signup">Join free</a></div>
   </div>
   <div class="wrap legal small">
-    EliteNexa operates as a direct selling entity in accordance with the Consumer Protection (Direct Selling) Rules, 2021 (India). We do not run any pyramid or money-circulation scheme, do not charge any fee for joining, and do not pay any income for recruitment. Earnings depend solely on product sales and are not guaranteed.
+    <% if (isIndia) { %>EliteNexa operates as a direct selling entity in accordance with the Consumer Protection (Direct Selling) Rules, 2021 (India).<% } else { %><span id="footer-country-note">Direct selling rules differ by country; check your local regulations before joining.</span> EliteNexa is an India-based direct selling business under India's Consumer Protection (Direct Selling) Rules, 2021.<% } %> We do not run any pyramid or money-circulation scheme, do not charge any fee for joining, and do not pay any income for recruitment. Earnings depend solely on product sales and are not guaranteed.
+    <% if (cur.code !== 'INR') { %><br>Prices shown in <%= cur.code %> are approximate conversions from INR (rates set by admin).<% } %>
     <br>© <%= new Date().getFullYear() %> EliteNexa. All rights reserved.
   </div>
 </footer>

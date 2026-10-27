@@ -3,6 +3,6 @@
   <div class="pbody">
     <h3><%= p.name %></h3>
     <p class="muted small"><%= p.description %></p>
-    <div class="prow"><span class="price"><%= inr(p.price_paise) %></span><span class="small <%= p.stock > 0 ? 'ok' : 'bad' %>"><%= p.stock > 0 ? 'In stock' : 'Out of stock' %></span></div>
+    <div class="prow"><span class="price"><%= money(p.price_paise) %></span><span class="small <%= p.stock > 0 ? 'ok' : 'bad' %>"><%= p.stock > 0 ? 'In stock' : 'Out of stock' %></span></div>
   </div>
 </article>

@@ -114,12 +114,18 @@ CREATE TABLE IF NOT EXISTS contact_messages (
     if (bad.length) console.warn('foreign_key_check after users migration reported', bad.length, 'issue(s)');
   }
 }
+// ---------- migration: member's country (display currency + country notes) ----------
+if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'country')) db.exec('ALTER TABLE users ADD COLUMN country TEXT');
 // ---------- migration: payout method / PayPal email / country on withdrawals ----------
 {
   const have = new Set(db.prepare('PRAGMA table_info(withdrawals)').all().map(c => c.name));
   if (!have.has('payout_method')) db.exec("ALTER TABLE withdrawals ADD COLUMN payout_method TEXT NOT NULL DEFAULT 'bank_upi'");
   if (!have.has('paypal_email')) db.exec('ALTER TABLE withdrawals ADD COLUMN paypal_email TEXT');
   if (!have.has('country')) db.exec("ALTER TABLE withdrawals ADD COLUMN country TEXT NOT NULL DEFAULT 'India'");
+  // currency the member typed the amount in, that amount, and the rate used (units per 1 INR); amount_paise stays INR
+  if (!have.has('req_currency')) db.exec("ALTER TABLE withdrawals ADD COLUMN req_currency TEXT NOT NULL DEFAULT 'INR'");
+  if (!have.has('req_amount')) db.exec('ALTER TABLE withdrawals ADD COLUMN req_amount REAL');
+  if (!have.has('fx_rate')) db.exec('ALTER TABLE withdrawals ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1');
 }
 
 // ---------- migration: every account gets a unique, case-insensitive User ID (users.username) ----------

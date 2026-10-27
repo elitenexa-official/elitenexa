@@ -3,7 +3,7 @@
 <div class="card">
 <% if (!orders.length) { %><p class="muted">No orders yet.</p><% } else { %>
 <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th>Product</th><th>Qty</th><th class="r">Total</th><th>Status</th></tr></thead><tbody>
-<% orders.forEach(o => { %><tr><td><%= o.id %></td><td class="small"><%= fmtDate(o.created_at) %></td><td><%= o.product_name %></td><td><%= o.qty %></td><td class="r"><%= inr(o.total_paise) %></td><td><span class="pill <%= o.status %>"><%= o.status %></span></td></tr><% }) %>
+<% orders.forEach(o => { %><tr><td><%= o.id %></td><td class="small"><%= fmtDate(o.created_at) %></td><td><%= o.product_name %></td><td><%= o.qty %></td><td class="r"><%= money(o.total_paise) %><% if (cur.code !== 'INR') { %><br><span class="small muted inr-hint"><%= inrHint(o.total_paise) %></span><% } %></td><td><span class="pill <%= o.status %>"><%= o.status %></span></td></tr><% }) %>
 </tbody></table></div><% } %>
 <p class="small muted">Payment instructions will be shared by EliteNexa support. Online payment (e.g. Razorpay) can be added later.</p>
 </div>

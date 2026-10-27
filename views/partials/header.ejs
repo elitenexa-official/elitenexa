@@ -38,6 +38,13 @@
       <a href="/income-plan" class="<%= path==='/income-plan'?'on':'' %>">Income Plan</a>
       <a href="/about" class="<%= path==='/about'?'on':'' %>">About</a>
       <a href="/contact" class="<%= path==='/contact'?'on':'' %>">Contact</a>
+      <form method="post" action="/country" class="inline country-form" id="country-form">
+        <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="back" value="<%= path %>">
+        <select name="country" id="country-select" aria-label="Country / currency" class="country-select">
+          <% COUNTRIES.forEach(c => { %><option value="<%= c.name %>"<%= c.name === country ? ' selected' : '' %>><%= c.flag %> <%= c.name %></option><% }) %>
+        </select><noscript><button class="btn btn-sm btn-outline">Go</button></noscript>
+        <span class="cur-badge small" id="cur-badge"><%= cur.code %></span>
+      </form>
       <% if (user) { %>
         <a class="btn btn-sm btn-ghost" href="<%= isStaff ? '/admin' : '/dashboard' %>"><%= isManager ? 'Manager panel' : (isStaff ? 'Admin panel' : 'My dashboard') %></a>
         <form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-outline">Log out</button></form>
@@ -55,7 +62,7 @@
       <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>EliteNexa</b><small><%= isManager ? 'Approval Manager' : 'Admin panel' %> · <%= user.username %></small></div></div>
       <% (isManager
           ? [['/admin','Dashboard'],['/admin/orders','Orders'],['/admin/withdrawals','Withdrawals']]
-          : [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/managers','Approval Managers'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']]
+          : [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/managers','Approval Managers'],['/admin/currencies','Currencies'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']]
         ).forEach(([h,l]) => { %>
         <a href="<%= h %>" class="<%= (path===h || (h!=='/admin' && path.startsWith(h))) ? 'on' : '' %>"><%= l %></a>
       <% }) %>

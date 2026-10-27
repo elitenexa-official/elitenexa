@@ -1,0 +1,7 @@
+<div class="card note small country-note" id="country-note" data-country="<%= country %>">
+  <b><%= countryInfo.flag %> <%= country %></b> ·
+  <% if (isIndia) { %>EliteNexa follows India's Consumer Protection (Direct Selling) Rules, 2021: no joining fee, no income for recruitment, earnings only from product sales.
+  <% } else { %>Direct selling rules differ by country; check your local regulations before joining. EliteNexa is an India-based business operating under India's Consumer Protection (Direct Selling) Rules, 2021.
+  <% } %>
+  <% if (cur.code !== 'INR') { %><br>Amounts are shown in <%= cur.name %> (<%= cur.code %>) at an approximate rate set by admin (1 INR = <%= cur.rate_per_inr %> <%= cur.code %>). Orders, commissions and the wallet are recorded in Indian Rupees (INR).<% } %>
+</div>

@@ -1,0 +1,21 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Currencies</h1><p class="muted small">Display currencies for visitors and members. Base currency is <b>INR</b>: all orders, commissions, wallet balances and payouts are stored and calculated in INR.</p></div></div>
+<div class="card note small">Rates are <b>set by admin and approximate</b> (units of the currency for 1 INR). They only change how amounts are displayed, and the INR value of a new withdrawal request (the member types the amount in their currency; the rate used is saved on the request). Update them regularly from a reliable source. Disabling a currency makes its countries see INR. Every change is recorded in the audit log.</div>
+<div class="card"><div class="table-wrap"><table class="table" id="currency-table"><thead><tr><th>Currency</th><th>Countries</th><th>Symbol</th><th>Rate (per 1 INR)</th><th>Example ₹1,000</th><th>Enabled</th><th>Last updated</th><th></th></tr></thead><tbody>
+<% currencies.forEach(c => { const cs = countries.filter(x => x.currency === c.code).map(x => x.flag + ' ' + x.name).join(', '); %>
+<tr data-code="<%= c.code %>">
+  <% if (c.code === 'INR') { %>
+    <td><b>INR</b> <span class="pill paid">base</span><br><span class="small muted"><%= c.name %></span></td><td class="small"><%= cs %></td><td><%= c.symbol %></td><td>1 (fixed)</td><td>₹1,000.00</td><td>Always</td><td class="small"><%= fmtDate(c.updated_at) %></td><td></td>
+  <% } else { %>
+    <td><b><%= c.code %></b><br><span class="small muted"><%= c.name %></span></td><td class="small"><%= cs || '—' %></td>
+    <td><input form="cur-<%= c.code %>" name="symbol" value="<%= c.symbol %>" maxlength="6" class="w-xs"></td>
+    <td><input form="cur-<%= c.code %>" name="rate_per_inr" type="number" step="any" min="0.000001" value="<%= c.rate_per_inr %>" required class="w-sm"></td>
+    <td class="small nowrap"><%= fmtCur(1000 * c.rate_per_inr, c.code) %></td>
+    <td><input form="cur-<%= c.code %>" type="checkbox" name="enabled" value="1"<%= c.enabled ? ' checked' : '' %> aria-label="Enable <%= c.code %>"></td>
+    <td class="small"><%= fmtDate(c.updated_at) %></td>
+    <td><form method="post" action="/admin/currencies/<%= c.code %>" id="cur-<%= c.code %>" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-gold">Save</button></form></td>
+  <% } %>
+</tr>
+<% }) %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>

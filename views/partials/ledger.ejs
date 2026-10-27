@@ -1,4 +1,4 @@
 <% if (!rows.length) { %><p class="muted small">No transactions yet.</p><% } else { %>
 <div class="table-wrap"><table class="table ledger"><thead><tr><th>Date</th><th>Reason</th><th class="r">Amount</th></tr></thead><tbody>
-<% rows.forEach(l => { %><tr><td class="small when"><%= fmtDate(l.created_at) %></td><td class="reason"><%= l.reason %><br><span class="small muted"><%= l.type.replace(/_/g,' ') %><%= l.admin_name || l.admin ? ' · by ' + (l.admin_name || l.admin) : '' %></span></td><td class="r nowrap <%= l.amount_paise >= 0 ? 'ok' : 'bad' %>"><%= l.amount_paise >= 0 ? '+' : '−' %><%= inr(Math.abs(l.amount_paise)) %></td></tr><% }) %>
+<% rows.forEach(l => { %><tr><td class="small when"><%= fmtDate(l.created_at) %></td><td class="reason"><%= l.reason %><br><span class="small muted"><%= l.type.replace(/_/g,' ') %><%= l.admin_name || l.admin ? ' · by ' + (l.admin_name || l.admin) : '' %></span></td><td class="r nowrap <%= l.amount_paise >= 0 ? 'ok' : 'bad' %>"><%= l.amount_paise >= 0 ? '+' : '−' %><%= money(Math.abs(l.amount_paise)) %></td></tr><% }) %>
 </tbody></table></div><% } %>

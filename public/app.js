@@ -47,3 +47,19 @@ document.addEventListener('input', function (e) {
   }
   sel.addEventListener('change', sync); sync();
 })();
+// Header country selector: switch on change
+(function () {
+  var sel = document.getElementById('country-select'); if (!sel) return;
+  sel.addEventListener('change', function () { sel.form.submit(); });
+})();
+// Withdrawal amount typed in the member's currency: live "≈ ₹X" hint
+(function () {
+  var inp = document.getElementById('wd_amount'), hint = document.getElementById('wd_inr_hint');
+  if (!inp || !hint) return;
+  var rate = Number(inp.getAttribute('data-rate')) || 1;
+  function upd() {
+    var v = Number(inp.value) || 0, inr = v / rate;
+    hint.textContent = '≈ ₹' + inr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  inp.addEventListener('input', upd); upd();
+})();

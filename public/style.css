@@ -158,3 +158,11 @@ input:disabled{opacity:.6}
 .manager-row details{margin-top:8px}
 .reset-form{max-width:360px;margin-top:8px}
 .wdform label{display:block;margin-bottom:4px}
+.country-form{display:inline-flex;align-items:center;gap:6px}
+.country-select{background:#1d1b1c;color:#f3e3a6;border:1px solid rgba(212,175,55,.4);border-radius:999px;padding:5px 10px;font-size:.8rem;max-width:170px;cursor:pointer}
+.cur-badge{color:#d4af37;font-weight:600;letter-spacing:.04em}
+.inr-hint{display:block;margin-top:2px}
+.prow .inr-hint{display:inline}
+.country-note{margin:12px 0 20px}
+.w-xs{width:58px}.w-sm{width:92px}
+#currency-table td,#currency-table th{padding-left:8px;padding-right:8px}

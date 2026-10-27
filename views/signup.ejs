@@ -13,6 +13,7 @@
       <small class="hint muted" id="userid-hint">4–20 characters: letters, numbers or underscore (_). Not case-sensitive.</small></label>
     <label>Email<input type="email" name="email" required maxlength="200" value="<%= form.email || '' %>" autocomplete="email"></label>
     <label>Mobile (optional)<input name="phone" maxlength="16" value="<%= form.phone || '' %>" autocomplete="tel"></label>
+    <label>Country<select name="country" id="country"><% COUNTRIES.forEach(c => { %><option value="<%= c.name %>"<%= c.name === (form.country || country) ? ' selected' : '' %>><%= c.flag %> <%= c.name %></option><% }) %></select></label>
     <div class="row2">
       <label>Password <span class="muted small">(min 8 characters)</span><input type="password" name="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
       <label>Confirm password<input type="password" name="password2" required minlength="8" maxlength="128" autocomplete="new-password"></label>

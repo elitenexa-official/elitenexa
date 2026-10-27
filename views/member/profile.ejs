@@ -6,6 +6,8 @@
   <label>Full name<input name="name" required maxlength="100" value="<%= user.name %>"></label>
   <label>Email<input value="<%= user.email %>" disabled></label>
   <label>Mobile<input name="phone" maxlength="16" value="<%= user.phone || '' %>"></label>
+  <label>Country<select name="country" id="country"><% COUNTRIES.forEach(c => { %><option value="<%= c.name %>"<%= c.name === country ? ' selected' : '' %>><%= c.flag %> <%= c.name %></option><% }) %></select></label>
+  <p class="small muted">Your country sets the currency shown across the site (<%= cur.code %> now). Amounts are recorded in INR and converted at admin-set approximate rates.</p>
   <p class="small muted">Referral code: <b><%= user.referral_code %></b> · Member since <%= fmtDate(user.created_at) %></p>
   <button class="btn btn-gold">Save profile</button>
   <p class="small"><a href="/profile/password">Change password →</a></p>
