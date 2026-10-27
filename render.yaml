@@ -1,0 +1,27 @@
+# Render Blueprint – free demo web service for EliteNexa.
+# NOTE: the free plan has no persistent disk, so the SQLite DB (data/) resets on every restart/spin-down.
+# On a fresh DB the app seeds 4 sample products and the 'admin' account (password = ADMIN_PASSWORD).
+services:
+  - type: web
+    name: elitenexa
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: DEMO_MODE
+        value: "1"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false

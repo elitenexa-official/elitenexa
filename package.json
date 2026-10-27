@@ -1,0 +1,27 @@
+{
+  "name": "elitenexa",
+  "version": "1.0.0",
+  "description": "EliteNexa direct-selling website (product-sales commissions only)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "python3 scripts/e2e_test.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.10.0",
+    "better-sqlite3-session-store": "^0.1.0",
+    "ejs": "^7.0.2",
+    "express": "^4.22.3",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=18 <23"
+  }
+}

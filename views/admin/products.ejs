@@ -1,0 +1,10 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>Products</h1><a class="btn btn-gold btn-sm" href="/admin/products/new">+ Add product</a></div>
+<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th></th><th>Name</th><th class="r">Price</th><th>Stock</th><th>Visible</th><th></th></tr></thead><tbody>
+<% products.forEach(p => { %><tr>
+  <td><img class="thumb" src="<%= p.image_url || '/img/sample-1.svg' %>" alt=""></td><td><b><%= p.name %></b><br><span class="small muted"><%= (p.description||'').slice(0,80) %></span></td>
+  <td class="r"><%= inr(p.price_paise) %></td><td><%= p.stock %></td><td><%= p.active ? 'Yes' : 'Hidden' %></td>
+  <td class="nowrap"><a class="btn btn-sm btn-outline" href="/admin/products/<%= p.id %>/edit">Edit</a>
+  <form method="post" action="/admin/products/<%= p.id %>/delete" class="inline confirm"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-danger">Delete</button></form></td>
+</tr><% }) %></tbody></table></div></div>
+<%- include('../partials/footer') %>

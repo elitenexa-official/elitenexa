@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><%= title ? title + ' · ' : '' %>EliteNexa</title>
+<meta name="description" content="EliteNexa – premium products and a transparent, sales-based direct selling opportunity in India.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+<link rel="icon" href="/brand/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png">
+<link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
+<meta name="theme-color" content="#181617">
+<meta property="og:site_name" content="EliteNexa">
+<meta property="og:title" content="<%= title ? title + ' · ' : '' %>EliteNexa – Grow Together · Shine Together">
+<meta property="og:description" content="Premium products and a transparent, sales-based direct selling opportunity in India.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="<%= baseUrl %>/brand/logo_stacked_dark.png">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<%
+  const isAdmin = path.startsWith('/admin');
+  const memberPaths = ['/dashboard','/profile','/shop','/orders','/team','/wallet'];
+  const isMember = memberPaths.some(p => path === p || path.startsWith(p + '/'));
+  const shell = isAdmin ? 'admin' : (isMember ? 'member' : 'public');
+%>
+<body class="shell-<%= shell %>">
+<header class="topbar">
+  <div class="wrap nav">
+    <a class="brand" href="/" aria-label="EliteNexa home"><img src="/brand/logo_horizontal_760.png" alt="EliteNexa – Grow Together · Shine Together" width="190" height="50"></a>
+    <input type="checkbox" id="navtoggle" class="navtoggle" aria-label="Menu">
+    <label for="navtoggle" class="burger" aria-hidden="true"><span></span><span></span><span></span></label>
+    <nav class="links">
+      <a href="/products" class="<%= path==='/products'?'on':'' %>">Products</a>
+      <a href="/income-plan" class="<%= path==='/income-plan'?'on':'' %>">Income Plan</a>
+      <a href="/about" class="<%= path==='/about'?'on':'' %>">About</a>
+      <a href="/contact" class="<%= path==='/contact'?'on':'' %>">Contact</a>
+      <% if (user) { %>
+        <a class="btn btn-sm btn-ghost" href="<%= user.role==='admin' ? '/admin' : '/dashboard' %>"><%= user.role==='admin' ? 'Admin panel' : 'My dashboard' %></a>
+        <form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-outline">Log out</button></form>
+      <% } else { %>
+        <a class="btn btn-sm btn-ghost" href="/login">Log in</a>
+        <a class="btn btn-sm btn-gold" href="/signup">Join free</a>
+      <% } %>
+    </nav>
+  </div>
+</header>
+<% if (shell !== 'public') { %>
+<div class="app wrap">
+  <aside class="side">
+    <% if (shell === 'admin') { %>
+      <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>EliteNexa</b><small>Admin panel · <%= user.username %></small></div></div>
+      <% [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']].forEach(([h,l]) => { %>
+        <a href="<%= h %>" class="<%= (path===h || (h!=='/admin' && path.startsWith(h))) ? 'on' : '' %>"><%= l %></a>
+      <% }) %>
+    <% } else { %>
+      <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>Hi, <%= user.name.split(' ')[0] %></b><small>ID: <%= user.username %></small></div></div>
+      <% [['/dashboard','Dashboard'],['/shop','Place order'],['/orders','My orders'],['/team','My team'],['/wallet','Wallet'],['/profile','Profile'],['/profile/password','Change password']].forEach(([h,l]) => { %>
+        <a href="<%= h %>" class="<%= path===h ? 'on' : '' %>"><%= l %></a>
+      <% }) %>
+    <% } %>
+  </aside>
+  <main class="content">
+<% } else { %>
+<main>
+<% } %>
+<% if (DEMO_MODE && user && user.role === 'admin') { %><div class="<%= shell==='public' ? 'wrap' : '' %>"><div class="demo-banner" id="demo-banner" role="status"><span>Demo mode – data resets when the server restarts</span><button type="button" class="demo-close" aria-label="Dismiss" data-dismiss="demo-banner">&times;</button></div></div><% } %>
+<% if (flash) { %><div class="<%= shell==='public' ? 'wrap' : '' %>"><div class="alert alert-<%= flash.type %>"><%= flash.msg %></div></div><% } %>

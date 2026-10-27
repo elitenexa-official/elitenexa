@@ -1,0 +1,16 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1><%= title %></h1></div>
+<form method="post" action="/admin/products/save" class="card form narrow-form">
+  <% if (typeof error !== 'undefined') { %><div class="alert alert-err"><%= error %></div><% } %>
+  <input type="hidden" name="_csrf" value="<%= csrf %>"><% if (p.id) { %><input type="hidden" name="id" value="<%= p.id %>"><% } %>
+  <label>Name<input name="name" required maxlength="150" value="<%= p.name || '' %>"></label>
+  <div class="row2">
+    <label>Price (₹)<input type="number" step="0.01" min="0" name="price" required value="<%= p.price_paise != null && !isNaN(p.price_paise) ? (p.price_paise/100).toFixed(2) : '' %>"></label>
+    <label>Stock<input type="number" min="0" step="1" name="stock" required value="<%= p.stock %>"></label>
+  </div>
+  <label>Image URL<input name="image_url" maxlength="500" value="<%= p.image_url || '' %>" placeholder="https://… or /img/…"></label>
+  <label>Description<textarea name="description" rows="4" maxlength="3000"><%= p.description || '' %></textarea></label>
+  <label class="check"><input type="checkbox" name="active" value="1" <%= p.active ? 'checked' : '' %>> Visible in store</label>
+  <div><button class="btn btn-gold">Save product</button> <a class="btn btn-outline" href="/admin/products">Cancel</a></div>
+</form>
+<%- include('../partials/footer') %>

@@ -1,0 +1,14 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>Members</h1>
+<form method="get" class="searchf"><input name="q" value="<%= search %>" placeholder="Search name, User ID, email, code"><button class="btn btn-sm btn-outline">Search</button></form></div>
+<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Name / email</th><th>User ID</th><th>Code</th><th>Sponsor</th><th>Directs</th><th class="r">Sales vol.</th><th class="r">Wallet</th><th>Status</th><th></th></tr></thead><tbody>
+<% members.forEach(u => { %><tr>
+  <td><%= u.id %></td><td><b><%= u.name %></b><br><span class="small muted"><%= u.email %> <%= u.phone || '' %></span></td><td><b><%= u.username %></b></td><td><code><%= u.referral_code %></code></td>
+  <td class="small"><%= u.sponsor_name || '—' %></td><td><%= u.directs %></td><td class="r"><%= inr(u.volume) %></td><td class="r"><a href="/admin/wallet?member=<%= u.id %>"><%= inr(u.balance) %></a></td>
+  <td><span class="pill <%= u.status==='active'?'paid':'cancelled' %>"><%= u.status %></span></td>
+  <td><form method="post" action="/admin/members/<%= u.id %>/status" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="status" value="<%= u.status==='active'?'blocked':'active' %>"><button class="btn btn-sm <%= u.status==='active'?'btn-outline':'btn-gold' %>"><%= u.status==='active'?'Block':'Activate' %></button></form></td>
+</tr><% }) %>
+<% if (!members.length) { %><tr><td colspan="10" class="muted">No members found.</td></tr><% } %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>

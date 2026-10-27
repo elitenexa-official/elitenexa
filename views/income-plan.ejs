@@ -1,0 +1,61 @@
+<%- include('partials/header') %>
+<section class="page-hero"><div class="wrap"><h1>Income Plan</h1><p class="lead">Exactly how members earn at EliteNexa – in plain language. This page always shows the current live settings.</p></div></section>
+<section class="wrap pad narrow-lg">
+  <div class="card highlight">
+    <h2>The one rule</h2>
+    <p><b>You earn only when a genuine product order is paid.</b> EliteNexa pays nothing for joining, signing up people, "helping", donations or any money transfers. Joining is free. Nobody needs to buy anything to join.</p>
+  </div>
+
+  <h2>1. Sales commission (on paid product orders)</h2>
+  <p>When a member's product order is marked <b>paid</b>, a percentage of that order's sale amount is credited to the members above them who referred them (their "upline"):</p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Level</th><th>Who</th><th>Commission</th><th>On a ₹1,000 sale</th></tr></thead>
+    <tbody>
+    <% settings.commission_levels.forEach((p, i) => { %>
+      <tr><td>Level <%= i+1 %></td><td><%= i===0 ? 'The member who directly referred the buyer' : 'Sponsor ' + (i+1) + ' steps above the buyer' %></td><td><b><%= p %>%</b></td><td><%= inr(p * 1000) %></td></tr>
+    <% }) %>
+    </tbody>
+  </table></div>
+  <p class="muted small">Total maximum payout per sale: <%= settings.commission_levels.reduce((a,b)=>a+Number(b),0) %>% of the sale amount. Commissions are calculated on the order amount actually paid. If an order is cancelled or refunded, related commissions are reversed. Only active (non-blocked) members receive commission.</p>
+
+  <h3>Example</h3>
+  <div class="card example">
+    <p>Asha refers Ravi. Ravi refers Meena. Meena buys products worth <b>₹2,000</b> and pays.</p>
+    <ul>
+      <li>Ravi (Level 1 for Meena) earns <%= settings.commission_levels[0] || 0 %>% = <b><%= inr((settings.commission_levels[0]||0) * 2000) %></b></li>
+      <% if (settings.commission_levels.length > 1) { %><li>Asha (Level 2 for Meena) earns <%= settings.commission_levels[1] %>% = <b><%= inr(settings.commission_levels[1] * 2000) %></b></li><% } %>
+      <li>If Meena had only signed up and bought nothing, <b>nobody would earn anything.</b></li>
+    </ul>
+  </div>
+
+  <h2>2. Ranks (recognition based on sales volume)</h2>
+  <p>Your rank is based on the value of paid product orders – your own personal purchases plus your team's purchases (up to <%= settings.team_depth %> levels deep). Ranks never require buying a package or paying a fee.</p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Rank</th><th>Personal sales volume</th><th>Team sales volume</th></tr></thead>
+    <tbody><% settings.ranks.forEach(r => { %><tr><td><b><%= r.name %></b></td><td><%= inr(r.personal*100) %></td><td><%= inr(r.team*100) %></td></tr><% }) %></tbody>
+  </table></div>
+
+  <h2>3. Your wallet &amp; withdrawals</h2>
+  <ul>
+    <li>Your wallet is an earnings ledger. Every credit and debit is listed with its reason and date.</li>
+    <li>You can request a withdrawal of your available balance (minimum <%= inr(settings.min_withdrawal_rupees*100) %>) to your own bank account or UPI ID. Requests are reviewed by EliteNexa and paid out externally.</li>
+    <li>Money cannot be transferred between members. The wallet cannot be "topped up" and is not a payment instrument.</li>
+    <li>Applicable taxes (e.g. TDS under the Income Tax Act) may be deducted as required by law. KYC (PAN, address proof) may be required before payout.</li>
+  </ul>
+
+  <h2 id="consumer">4. Your rights as a customer and direct seller</h2>
+  <ul>
+    <li>EliteNexa follows the <b>Consumer Protection (Direct Selling) Rules, 2021</b>. We do not operate any pyramid scheme or money-circulation scheme, and we do not charge any entry or registration fee.</li>
+    <li>No member is required to purchase any product or maintain any stock to join or remain a member.</li>
+    <li>Products can be returned or exchanged as per our return policy; unsold products bought by a member can be returned as required under the Rules.</li>
+    <li>For any complaint, contact our grievance officer via the <a href="/contact">Contact page</a>. We acknowledge complaints within 48 hours and aim to resolve them within one month.</li>
+    <li>You may leave at any time. Any confirmed balance remains payable as per this plan.</li>
+  </ul>
+
+  <div id="disclaimer" class="card warn">
+    <h2>Income disclaimer</h2>
+    <p>EliteNexa does <b>not</b> guarantee any income. The figures on this page explain how commissions are calculated; they are <b>not</b> a promise or estimate of what you will earn. Results vary widely and depend on your own effort, skills, time invested and real customer demand for products. Many members earn little or nothing and simply enjoy the products as customers. Do not join expecting fixed, passive or "doubling" income, and never borrow money to buy products.</p>
+  </div>
+  <p class="center"><a class="btn btn-gold btn-lg" href="/signup">Join free</a></p>
+</section>
+<%- include('partials/footer') %>

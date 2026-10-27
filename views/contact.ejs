@@ -1,0 +1,17 @@
+<%- include('partials/header') %>
+<section class="page-hero"><div class="wrap"><h1>Contact &amp; grievances</h1><p class="lead">Questions about products, orders or the income plan? We are happy to help.</p></div></section>
+<section class="wrap pad grid2">
+  <form method="post" action="/contact" class="card form">
+    <% if (typeof error !== 'undefined') { %><div class="alert alert-err"><%= error %></div><% } %>
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <label>Your name<input name="name" required maxlength="100" value="<%= form.name || '' %>"></label>
+    <label>Email<input type="email" name="email" required maxlength="200" value="<%= form.email || '' %>"></label>
+    <label>Message<textarea name="message" required rows="5" maxlength="2000"><%= form.message || '' %></textarea></label>
+    <button class="btn btn-gold">Send message</button>
+  </form>
+  <div>
+    <div class="card"><h3>Customer care</h3><p class="muted">Email: support@elitenexa.example (replace)<br>Hours: Mon–Sat, 10am–6pm IST</p></div>
+    <div class="card"><h3>Grievance officer</h3><p class="muted">Name: (to be published)<br>Email: grievance@elitenexa.example (replace)<br>Complaints are acknowledged within 48 hours and resolved within one month, as per the Consumer Protection (Direct Selling) Rules, 2021.</p></div>
+  </div>
+</section>
+<%- include('partials/footer') %>

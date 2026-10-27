@@ -1,0 +1,15 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>My team</h1></div>
+<div class="stats">
+  <div class="stat"><small>Direct referrals</small><b><%= team.filter(t=>t.lvl===1).length %></b></div>
+  <div class="stat"><small>Total team (up to <%= s.team_depth %> levels)</small><b><%= team.length %></b></div>
+  <div class="stat"><small>Team sales volume</small><b><%= inr(rank.tv*100) %></b></div>
+</div>
+<div class="card">
+<% if (!team.length) { %><p class="muted">No team members yet. Share your referral link from the dashboard.</p><% } else { %>
+<div class="table-wrap"><table class="table"><thead><tr><th>Level</th><th>Name</th><th>Sponsor</th><th>Joined</th><th>Status</th><th class="r">Sales volume (paid)</th></tr></thead><tbody>
+<% team.forEach(t => { %><tr><td>L<%= t.lvl %></td><td><%= t.name %></td><td class="small"><%= t.sponsor_name %></td><td class="small"><%= fmtDate(t.created_at) %></td><td><span class="pill <%= t.status==='active'?'paid':'cancelled' %>"><%= t.status %></span></td><td class="r"><%= inr(t.volume) %></td></tr><% }) %>
+</tbody></table></div><% } %>
+<p class="small muted">Commission applies to levels 1–<%= s.commission_levels.length %> (<%= s.commission_levels.map((p,i)=>'L'+(i+1)+' '+p+'%').join(', ') %>) on paid product orders only.</p>
+</div>
+<%- include('../partials/footer') %>

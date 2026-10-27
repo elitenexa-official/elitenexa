@@ -1,0 +1,28 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>Wallet adjustments</h1></div>
+<div class="grid2">
+<form method="post" action="/admin/wallet/adjust" class="card form">
+  <h3>Manual credit / debit</h3>
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <label>Member<select name="user_id" required><option value="">Select member…</option>
+    <% members.forEach(u => { %><option value="<%= u.id %>" <%= selected===u.id?'selected':'' %>><%= u.name %> · <%= u.username %> · <%= u.email %></option><% }) %></select></label>
+  <div class="row2">
+    <label>Type<select name="type"><option value="credit">Credit (+)</option><option value="debit">Debit (−)</option></select></label>
+    <label>Amount (₹)<input type="number" name="amount" min="0.01" step="0.01" required></label>
+  </div>
+  <label>Reason (mandatory, visible to member)<input name="reason" required minlength="5" maxlength="300" placeholder="e.g. Correction for order #12 commission"></label>
+  <button class="btn btn-gold">Apply adjustment</button>
+  <p class="small muted">Every adjustment is recorded in the member's ledger and the audit log with your admin username and timestamp. Payouts happen outside this system – integrate a payment gateway such as Razorpay later.</p>
+</form>
+<div class="card">
+  <% if (selected) { %><h3>Selected member ledger · balance <span class="gold"><%= inr(selBal) %></span></h3><%- include('../partials/ledger', { rows: memberLedger }) %>
+  <% } else { %><h3>Member ledger</h3><p class="muted small">Pick a member (or click a wallet balance on the Members page) to see their full ledger.</p>
+  <form method="get"><select name="member" class="mt"><% members.forEach(u => { %><option value="<%= u.id %>"><%= u.name %></option><% }) %></select> <button class="btn btn-sm btn-outline">View</button></form><% } %>
+</div>
+</div>
+<div class="card"><h3>Recent manual adjustments</h3>
+<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Member</th><th>Reason</th><th>Admin</th><th class="r">Amount</th></tr></thead><tbody>
+<% adjustments.forEach(l => { %><tr><td class="small nowrap"><%= fmtDate(l.created_at) %></td><td><%= l.member %><br><span class="small muted"><%= l.email %></span></td><td><%= l.reason %></td><td><%= l.admin %></td><td class="r <%= l.amount_paise>=0?'ok':'bad' %>"><%= l.amount_paise>=0?'+':'−' %><%= inr(Math.abs(l.amount_paise)) %></td></tr><% }) %>
+<% if (!adjustments.length) { %><tr><td colspan="5" class="muted">None yet.</td></tr><% } %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>

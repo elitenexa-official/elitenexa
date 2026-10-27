@@ -1,0 +1,13 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>My profile</h1></div>
+<form method="post" action="/profile" class="card form narrow-form">
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <label>User ID<input value="<%= user.username %>" disabled></label>
+  <label>Full name<input name="name" required maxlength="100" value="<%= user.name %>"></label>
+  <label>Email<input value="<%= user.email %>" disabled></label>
+  <label>Mobile<input name="phone" maxlength="16" value="<%= user.phone || '' %>"></label>
+  <p class="small muted">Referral code: <b><%= user.referral_code %></b> · Member since <%= fmtDate(user.created_at) %></p>
+  <button class="btn btn-gold">Save profile</button>
+  <p class="small"><a href="/profile/password">Change password →</a></p>
+</form>
+<%- include('../partials/footer') %>

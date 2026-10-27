@@ -1,0 +1,19 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>Place an order</h1></div>
+<p class="muted small">Your order stays <b>Pending</b> until EliteNexa confirms your payment. Commissions to your upline are credited only after the order is marked paid.</p>
+<div class="grid3">
+<% products.forEach(p => { %>
+  <form method="post" action="/orders" class="card product form">
+    <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="product_id" value="<%= p.id %>">
+    <div class="pimg"><img src="<%= p.image_url || '/img/sample-1.svg' %>" alt="<%= p.name %>"></div>
+    <div class="pbody">
+      <h3><%= p.name %></h3>
+      <div class="prow"><span class="price"><%= inr(p.price_paise) %></span><span class="small muted"><%= p.stock %> in stock</span></div>
+      <label>Quantity<input type="number" name="qty" min="1" max="50" value="1" required></label>
+      <label>Delivery address<textarea name="address" rows="2" required minlength="10" maxlength="500" placeholder="House, street, city, PIN"></textarea></label>
+      <button class="btn btn-gold btn-block" <%= p.stock < 1 ? 'disabled' : '' %>>Place order</button>
+    </div>
+  </form>
+<% }) %>
+</div>
+<%- include('../partials/footer') %>

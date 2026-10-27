@@ -1,0 +1,41 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Dashboard</h1><p class="muted small">User ID: <b class="gold"><%= user.username %></b> · Grow Together · Shine Together</p></div><span class="badge rank"><%= rank.current.name %></span></div>
+<div class="stats">
+  <div class="stat gold-card"><small>Wallet balance</small><b><%= inr(bal) %></b><a href="/wallet" class="small">View ledger →</a></div>
+  <div class="stat"><small>Personal sales volume</small><b><%= inr(rank.pv*100) %></b></div>
+  <div class="stat"><small>Team sales volume</small><b><%= inr(rank.tv*100) %></b></div>
+  <div class="stat"><small>Team members</small><b><%= team.length %></b><span class="small muted"><%= team.filter(t=>t.lvl===1).length %> direct</span></div>
+</div>
+<div class="grid2">
+  <div class="card">
+    <h3>Your referral link</h3>
+    <p class="muted small">Share this link. You earn only when people in your team buy products and their orders are paid – never for sign-ups.</p>
+    <div class="copybox"><code><%= baseUrl %>/signup?ref=<%= user.referral_code %></code></div>
+    <p class="small">Your User ID: <b><%= user.username %></b> · Referral code: <b><%= user.referral_code %></b><% if (sponsor) { %> · Your sponsor: <%= sponsor.name %><% } %></p>
+  </div>
+  <div class="card">
+    <h3>Rank progress</h3>
+    <p>Current rank: <b class="gold"><%= rank.current.name %></b></p>
+    <% if (rank.next) { %>
+      <% const pp = Math.min(100, rank.next.personal ? rank.pv / rank.next.personal * 100 : 100), tp = Math.min(100, rank.next.team ? rank.tv / rank.next.team * 100 : 100); %>
+      <p class="small muted">Next: <b><%= rank.next.name %></b> — personal <%= inr(rank.next.personal*100) %> and team <%= inr(rank.next.team*100) %></p>
+      <div class="bar"><span style="width:<%= pp.toFixed(0) %>%"></span></div><p class="small muted">Personal <%= pp.toFixed(0) %>%</p>
+      <div class="bar"><span style="width:<%= tp.toFixed(0) %>%"></span></div><p class="small muted">Team <%= tp.toFixed(0) %>%</p>
+    <% } else { %><p class="small muted">You have reached the top rank.</p><% } %>
+  </div>
+</div>
+<div class="grid2">
+  <div class="card">
+    <div class="section-head"><h3>Recent wallet activity</h3><a class="link small" href="/wallet">All →</a></div>
+    <%- include('../partials/ledger', { rows: ledger }) %>
+  </div>
+  <div class="card">
+    <div class="section-head"><h3>Recent orders</h3><a class="link small" href="/shop">Place order →</a></div>
+    <% if (!orders.length) { %><p class="muted small">No orders yet.</p><% } else { %>
+    <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Product</th><th>Total</th><th>Status</th></tr></thead><tbody>
+    <% orders.forEach(o => { %><tr><td><%= o.id %></td><td><%= o.product_name %> × <%= o.qty %></td><td><%= inr(o.total_paise) %></td><td><span class="pill <%= o.status %>"><%= o.status %></span></td></tr><% }) %>
+    </tbody></table></div><% } %>
+  </div>
+</div>
+<p class="disclaimer small">Earnings depend on actual product sales and are not guaranteed. See the <a href="/income-plan">Income Plan</a>.</p>
+<%- include('../partials/footer') %>

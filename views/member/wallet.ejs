@@ -1,0 +1,27 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>My wallet</h1></div>
+<div class="grid2">
+  <div class="stat gold-card big"><small>Available balance</small><b><%= inr(bal) %></b><span class="small">Earnings ledger · not a payment instrument</span></div>
+  <form method="post" action="/wallet/withdraw" class="card form">
+    <h3>Request withdrawal</h3>
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <div class="row2">
+      <label>Amount (₹)<input type="number" name="amount" min="<%= s.min_withdrawal_rupees %>" step="0.01" required></label>
+      <label>UPI ID / bank details<input name="payout_details" required maxlength="300" placeholder="name@upi or A/c + IFSC"></label>
+    </div>
+    <p class="small muted">Minimum <%= inr(s.min_withdrawal_rupees*100) %>. The amount is put on hold and paid to your own account after review. Transfers to other members are not possible.</p>
+    <button class="btn btn-gold">Submit request</button>
+  </form>
+</div>
+<div class="card">
+  <h3>Ledger (every credit and debit)</h3>
+  <%- include('../partials/ledger', { rows: ledger }) %>
+</div>
+<div class="card">
+  <h3>Withdrawal requests</h3>
+  <% if (!withdrawals.length) { %><p class="muted small">No requests yet.</p><% } else { %>
+  <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th class="r">Amount</th><th>Status</th><th>Note</th></tr></thead><tbody>
+  <% withdrawals.forEach(w => { %><tr><td><%= w.id %></td><td class="small"><%= fmtDate(w.created_at) %></td><td class="r"><%= inr(w.amount_paise) %></td><td><span class="pill <%= w.status==='approved'?'paid':w.status==='rejected'?'cancelled':'pending' %>"><%= w.status %></span></td><td class="small"><%= w.admin_note || '' %></td></tr><% }) %>
+  </tbody></table></div><% } %>
+</div>
+<%- include('../partials/footer') %>

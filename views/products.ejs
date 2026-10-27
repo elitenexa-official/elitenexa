@@ -1,0 +1,10 @@
+<%- include('partials/header') %>
+<section class="page-hero"><div class="wrap"><h1>Products</h1><p class="lead">Premium quality, fair MRP. Members and customers pay the same listed price.</p></div></section>
+<section class="wrap pad">
+  <div class="grid4">
+    <% products.forEach(p => { %><%- include('partials/product-card', { p }) %><% }) %>
+    <% if (!products.length) { %><p class="muted">No products yet.</p><% } %>
+  </div>
+  <div class="card note"><b>How to buy:</b> <a href="/signup">create a free account</a> (or <a href="/login">log in</a>) and place your order from your dashboard. All prices are inclusive of applicable taxes unless stated otherwise. Unused products can be returned as per our return &amp; refund policy (see <a href="/income-plan#consumer">consumer rights</a>).</div>
+</section>
+<%- include('partials/footer') %>

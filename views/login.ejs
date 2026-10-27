@@ -1,0 +1,16 @@
+<%- include('partials/header') %>
+<section class="wrap auth">
+  <form method="post" action="/login" class="card form">
+    <img class="auth-logo" src="/brand/mark_256.png" alt="EliteNexa" width="72" height="72">
+    <h1>Welcome back</h1>
+    <p class="tagline">Grow Together · Shine Together</p>
+    <% if (typeof error !== 'undefined') { %><div class="alert alert-err"><%= error %></div><% } %>
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="next" value="<%= next || '' %>">
+    <label>User ID or Email<input name="login" required maxlength="200" value="<%= form.login || '' %>" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Your User ID or email"></label>
+    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+    <button class="btn btn-gold btn-block">Log in</button>
+    <p class="small center">New here? <a href="/signup">Join free</a></p>
+  </form>
+</section>
+<%- include('partials/footer') %>

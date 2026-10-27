@@ -1,0 +1,26 @@
+<%- include('partials/header') %>
+<section class="wrap auth">
+  <form method="post" action="/signup" class="card form">
+    <img class="auth-logo" src="/brand/mark_256.png" alt="EliteNexa" width="72" height="72">
+    <h1>Join EliteNexa – free</h1>
+    <p class="tagline">Grow Together · Shine Together</p>
+    <p class="muted small">No joining fee. No purchase required. You earn only from genuine product sales.</p>
+    <% if (typeof error !== 'undefined') { %><div class="alert alert-err"><%= error %></div><% } %>
+    <% if (sponsor) { %><div class="alert alert-ok">You were referred by <b><%= sponsor.name %></b>.</div><% } %>
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <label>Full name<input name="name" required maxlength="100" value="<%= form.name || '' %>" autocomplete="name"></label>
+    <label>User ID <span class="muted small">(you will log in with this)</span><input name="userid" id="userid" required minlength="4" maxlength="20" pattern="[A-Za-z0-9_]{4,20}" value="<%= form.userid || '' %>" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. rahul_2026" title="4–20 characters: letters, numbers or underscore">
+      <small class="hint muted" id="userid-hint">4–20 characters: letters, numbers or underscore (_). Not case-sensitive.</small></label>
+    <label>Email<input type="email" name="email" required maxlength="200" value="<%= form.email || '' %>" autocomplete="email"></label>
+    <label>Mobile (optional)<input name="phone" maxlength="16" value="<%= form.phone || '' %>" autocomplete="tel"></label>
+    <div class="row2">
+      <label>Password <span class="muted small">(min 8 characters)</span><input type="password" name="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+      <label>Confirm password<input type="password" name="password2" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+    </div>
+    <label>Referral code or sponsor's User ID (optional)<input name="ref" maxlength="20" value="<%= form.ref || '' %>" placeholder="e.g. ENAB12CD" autocapitalize="none"></label>
+    <label class="check"><input type="checkbox" name="agree" value="1" required> <span>I have read the <a href="/income-plan" target="_blank">Income Plan &amp; income disclaimer</a> and understand that earnings come only from product sales and are not guaranteed.</span></label>
+    <button class="btn btn-gold btn-block">Create free account</button>
+    <p class="small center">Already a member? <a href="/login">Log in</a></p>
+  </form>
+</section>
+<%- include('partials/footer') %>

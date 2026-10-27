@@ -1,0 +1,7 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>Contact messages</h1></div>
+<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>From</th><th>Message</th></tr></thead><tbody>
+<% rows.forEach(r => { %><tr><td class="small nowrap"><%= fmtDate(r.created_at) %></td><td><%= r.name %><br><span class="small muted"><%= r.email %></span></td><td><%= r.message %></td></tr><% }) %>
+<% if (!rows.length) { %><tr><td colspan="3" class="muted">No messages.</td></tr><% } %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>

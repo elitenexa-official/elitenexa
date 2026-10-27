@@ -1,0 +1,13 @@
+node_modules/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+ADMIN_CREDENTIALS.txt
+.env
+.env.*
+.session_secret
+*.log
+screenshots/
+.DS_Store

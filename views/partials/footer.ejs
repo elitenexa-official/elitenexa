@@ -1,0 +1,19 @@
+<% const _shell = path.startsWith('/admin') || ['/dashboard','/profile','/shop','/orders','/team','/wallet'].includes(path) ? 'app' : 'public'; %>
+</main>
+<% if (_shell === 'app') { %></div><% } %>
+<footer class="footer">
+  <div class="wrap foot-grid">
+    <div>
+      <a class="brand" href="/"><img src="/brand/logo_horizontal_760.png" alt="EliteNexa – Grow Together · Shine Together" width="220" height="58"></a>
+      <p class="muted small">Premium products. Earnings only from genuine product sales. Free to join – no joining fee.</p>
+    </div>
+    <div><h4>Company</h4><a href="/about">About</a><a href="/products">Products</a><a href="/contact">Contact &amp; grievances</a></div>
+    <div><h4>Opportunity</h4><a href="/income-plan">Income Plan</a><a href="/income-plan#disclaimer">Income disclaimer</a><a href="/signup">Join free</a></div>
+  </div>
+  <div class="wrap legal small">
+    EliteNexa operates as a direct selling entity in accordance with the Consumer Protection (Direct Selling) Rules, 2021 (India). We do not run any pyramid or money-circulation scheme, do not charge any fee for joining, and do not pay any income for recruitment. Earnings depend solely on product sales and are not guaranteed.
+    <br>© <%= new Date().getFullYear() %> EliteNexa. All rights reserved.
+  </div>
+</footer>
+</body>
+</html>

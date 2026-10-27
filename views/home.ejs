@@ -1,0 +1,64 @@
+<%- include('partials/header') %>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Grow Together · Shine Together</span>
+      <h1>Products worth sharing.<br><span class="gold">An opportunity built on honesty.</span></h1>
+      <p class="lead">EliteNexa brings carefully selected premium products to your home. Love them? Recommend them to others and earn a transparent commission on every genuine product sale – nothing else.</p>
+      <div class="cta">
+        <a class="btn btn-gold btn-lg" href="/products">Explore products</a>
+        <a class="btn btn-outline-light btn-lg" href="/income-plan">See the income plan</a>
+      </div>
+      <ul class="trust">
+        <li>✓ Free to join – no joining fee</li>
+        <li>✓ Earnings only from product sales</li>
+        <li>✓ Direct Selling Rules, 2021 compliant</li>
+      </ul>
+    </div>
+    <div class="hero-art">
+      <img class="hero-logo" src="/brand/logo_stacked_720.png" alt="EliteNexa – Grow Together · Shine Together" width="420" height="420">
+      <div class="chips"><div class="glass g1"><small>Commission paid on</small><b>Product sales only</b></div>
+      <div class="glass g2"><small>Joining fee</small><b>₹0</b></div>
+      <div class="glass g3"><small>Income plan</small><b>100% public</b></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap pad">
+  <div class="section-head"><h2>Featured products</h2><a href="/products" class="link">View all →</a></div>
+  <div class="grid4">
+    <% products.forEach(p => { %><%- include('partials/product-card', { p }) %><% }) %>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap pad">
+    <h2 class="center">How EliteNexa works</h2>
+    <div class="grid3 steps">
+      <div class="card step"><span class="num">1</span><h3>Join free</h3><p class="muted">Create your account in a minute. There is no joining fee, kit fee or mandatory purchase.</p></div>
+      <div class="card step"><span class="num">2</span><h3>Use &amp; recommend</h3><p class="muted">Buy products you love and share your personal referral link with friends and customers.</p></div>
+      <div class="card step"><span class="num">3</span><h3>Earn on sales</h3><p class="muted">When a product order from your team is paid, you earn a published percentage of that sale. No sale, no commission.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap pad">
+  <div class="grid2 split">
+    <div>
+      <h2>Transparent by design</h2>
+      <p class="muted">Every rupee in your EliteNexa wallet is backed by a real, paid product order or a documented adjustment. Your wallet shows a complete ledger with the reason for every credit and debit.</p>
+      <ul class="checks">
+        <li>Commission on paid orders: <b><%= settings.commission_levels.map((p,i) => 'Level ' + (i+1) + ' ' + p + '%').join(' · ') %></b></li>
+        <li>Ranks (<%= settings.ranks.map(r => r.name).join(', ') %>) based on product sales volume</li>
+        <li>Withdrawals reviewed and paid to your bank / UPI</li>
+      </ul>
+      <a class="btn btn-gold" href="/income-plan">Read the full income plan</a>
+    </div>
+    <div class="card quote">
+      <p>“We believe a good business should be easy to explain. EliteNexa members earn only when real customers buy real products.”</p>
+      <span class="muted small">— The EliteNexa team</span>
+    </div>
+  </div>
+</section>
+<section class="wrap pad-sm"><p class="disclaimer small">Income disclaimer: Earnings at EliteNexa depend entirely on individual effort and actual product sales. There is no guaranteed income, and many members earn little or nothing. See the <a href="/income-plan#disclaimer">Income Plan</a> for details.</p></section>
+<%- include('partials/footer') %>

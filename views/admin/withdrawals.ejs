@@ -1,0 +1,13 @@
+<%- include('../partials/header') %>
+<div class="page-title"><h1>Withdrawal requests</h1></div>
+<div class="card note small">Approve only after you have paid the member externally (bank/UPI) and enter the payment reference (UTR). Later, connect a proper payment gateway such as <b>Razorpay Payouts</b> to automate this. Rejecting returns the held amount to the member's wallet.</div>
+<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th>Member</th><th class="r">Amount</th><th>Payout details</th><th>Status</th><th>Action</th></tr></thead><tbody>
+<% rows.forEach(w => { %><tr>
+  <td><%= w.id %></td><td class="small"><%= fmtDate(w.created_at) %></td><td><%= w.member %><br><span class="small muted"><%= w.email %></span></td><td class="r"><%= inr(w.amount_paise) %></td><td class="small"><%= w.payout_details %></td>
+  <td><span class="pill <%= w.status==='approved'?'paid':w.status==='rejected'?'cancelled':'pending' %>"><%= w.status %></span><% if (w.processed_at) { %><br><span class="small muted"><%= w.admin %> · <%= fmtDate(w.processed_at) %><br><%= w.admin_note %></span><% } %></td>
+  <td><% if (w.status==='pending') { %><form method="post" action="/admin/withdrawals/<%= w.id %>" class="wdform"><input type="hidden" name="_csrf" value="<%= csrf %>"><input name="note" required minlength="3" maxlength="300" placeholder="UTR ref / reject reason">
+    <button name="action" value="approve" class="btn btn-sm btn-gold">Approve</button> <button name="action" value="reject" class="btn btn-sm btn-danger">Reject</button></form><% } %></td>
+</tr><% }) %>
+<% if (!rows.length) { %><tr><td colspan="7" class="muted">No requests.</td></tr><% } %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>
