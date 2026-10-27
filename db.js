@@ -10,6 +10,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(path.join(DATA_DIR, 'elitenexa.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS orders (
   qty INTEGER NOT NULL CHECK (qty > 0),
   total_paise INTEGER NOT NULL,
   address TEXT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','delivered','cancelled')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','delivered','cancelled','returned')),
   commission_paid INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   paid_at TEXT,
@@ -128,6 +129,39 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'country'
   if (!have.has('fx_rate')) db.exec('ALTER TABLE withdrawals ADD COLUMN fx_rate REAL NOT NULL DEFAULT 1');
 }
 
+// ---------- migration: orders may be 'returned' (approved buyback) ----------
+{
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'").get().sql;
+  if (!sql.includes("'returned'")) {
+    const cols = db.prepare('PRAGMA table_info(orders)').all().map(c => c.name);
+    const newSql = sql.replace(/CREATE TABLE\s+"?orders"?/i, 'CREATE TABLE orders_new').replace("'delivered','cancelled')", "'delivered','cancelled','returned')");
+    db.pragma('foreign_keys = OFF');
+    db.transaction(() => {
+      db.exec(newSql);
+      db.exec(`INSERT INTO orders_new(${cols.join(',')}) SELECT ${cols.join(',')} FROM orders; DROP TABLE orders; ALTER TABLE orders_new RENAME TO orders;
+        CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);`);
+    })();
+    db.pragma('foreign_keys = ON');
+  }
+}
+// ---------- migration: binary plan columns ----------
+{
+  const addCol = (table, name, ddl) => { if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`); };
+  // binary placement (separate from the sponsor who referred the member)
+  addCol('users', 'placement_parent_id', 'INTEGER REFERENCES users(id)');
+  addCol('users', 'placement_side', "TEXT CHECK (placement_side IN ('L','R'))");
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_placement_slot ON users(placement_parent_id, placement_side) WHERE placement_parent_id IS NOT NULL');
+  // business volume per product (percent of MRP) and per order (snapshot at order time)
+  addCol('products', 'bv_percent', 'REAL NOT NULL DEFAULT 60');
+  addCol('orders', 'bv_total', 'INTEGER NOT NULL DEFAULT 0');
+  addCol('orders', 'bv_processed', 'INTEGER NOT NULL DEFAULT 0');
+  addCol('orders', 'is_repurchase', 'INTEGER NOT NULL DEFAULT 0');
+  addCol('orders', 'returned_at', 'TEXT');
+  addCol('wallet_ledger', 'commission_id', 'INTEGER');
+  // a released commission can be credited to the wallet only once (and reversed only once)
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_commission_once ON wallet_ledger(commission_id, type) WHERE commission_id IS NOT NULL');
+}
+
 // ---------- migration: every account gets a unique, case-insensitive User ID (users.username) ----------
 const USER_ID_RE = /^[A-Za-z0-9_]{4,20}$/;
 const RESERVED_IDS = new Set(['admin', 'administrator', 'root', 'support', 'elitenexa', 'system', 'help', 'official', 'staff', 'moderator']);
@@ -170,15 +204,9 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(lo
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(lower(email))');
 
 const DEFAULT_SETTINGS = {
-  commission_levels: [10, 5, 2],          // % of sale amount for upline generation 1, 2, 3...
-  team_depth: 5,                           // how deep "My Team" shows / team volume counts
+  team_depth: 5,                           // how deep "My Team" (sponsor list) shows
   min_withdrawal_rupees: 500,
-  ranks: [                                 // based on PAID product sales volume (rupees)
-    { name: 'Starter', personal: 0, team: 0 },
-    { name: 'Silver', personal: 2000, team: 10000 },
-    { name: 'Gold', personal: 5000, team: 50000 },
-    { name: 'Diamond', personal: 10000, team: 200000 },
-  ],
+  grievance: { name: 'Grievance Officer (to be appointed)', email: 'grievance@elitenexa.example', phone: '+91 00000 00000', address: 'EliteNexa, India (registered address to be added)' },
 };
 
 function getSettings() {
@@ -240,7 +268,11 @@ function seed() {
     fs.chmodSync(file, 0o600);
     console.log('Admin account created. Credentials written to ADMIN_CREDENTIALS.txt');
   }
-  if (db.prepare('SELECT COUNT(*) n FROM products').get().n === 0) {
+  if (!db.prepare("SELECT 1 FROM products WHERE name='EliteNexa Starter Kit'").get()) {
+    db.prepare('INSERT INTO products(name, price_paise, image_url, description, stock, bv_percent) VALUES (?,?,?,?,?,?)')
+      .run('EliteNexa Starter Kit', 119900, '/img/starter-kit.svg', 'Optional starter kit of EliteNexa products (SAMPLE contents – replace with the real kit list). Buying it is NOT required to join. BV 60% of MRP. 30-day buyback on unopened products.', 500, 60);
+  }
+  if (db.prepare("SELECT COUNT(*) n FROM products WHERE name<>'EliteNexa Starter Kit'").get().n === 0) {
     const ins = db.prepare('INSERT INTO products(name, price_paise, image_url, description, stock) VALUES (?,?,?,?,?)');
     ins.run('Sample Product 1 – replace', 149900, '/img/sample-1.svg', 'SAMPLE listing. Replace with your real product name, MRP, photo and description from Admin > Products.', 100);
     ins.run('Sample Product 2 – replace', 89900, '/img/sample-2.svg', 'SAMPLE listing. Replace with your real product name, MRP, photo and description from Admin > Products.', 100);
@@ -273,52 +305,9 @@ function downline(userId, depth) {
 function teamVolume(userId, depth) {
   return downline(userId, depth).reduce((a, m) => a + m.volume, 0);
 }
-function rankFor(userId, settings) {
-  settings = settings || getSettings();
-  const pv = personalVolume(userId) / 100, tv = teamVolume(userId, settings.team_depth) / 100;
-  const ranks = [...settings.ranks].sort((a, b) => a.personal + a.team - (b.personal + b.team));
-  let current = ranks[0], next = null;
-  for (const r of ranks) { if (pv >= r.personal && tv >= r.team) current = r; }
-  const idx = ranks.indexOf(current);
-  next = ranks[idx + 1] || null;
-  return { current, next, pv, tv };
-}
-
-// Credit upline commissions for a paid order. Runs inside a transaction.
-function creditCommissions(orderId) {
-  const order = db.prepare('SELECT * FROM orders WHERE id=?').get(orderId);
-  if (!order || order.commission_paid) return [];
-  const { commission_levels } = getSettings();
-  const credited = [];
-  let current = db.prepare('SELECT id, sponsor_id FROM users WHERE id=?').get(order.user_id);
-  for (let gen = 1; gen <= commission_levels.length; gen++) {
-    if (!current || !current.sponsor_id) break;
-    const sponsor = db.prepare('SELECT id, sponsor_id, status, role FROM users WHERE id=?').get(current.sponsor_id);
-    if (!sponsor) break;
-    const pct = Number(commission_levels[gen - 1]) || 0;
-    const amt = Math.floor(order.total_paise * pct / 100);
-    if (sponsor.role === 'member' && sponsor.status === 'active' && amt > 0) {
-      db.prepare(`INSERT INTO wallet_ledger(user_id, amount_paise, type, reason, order_id) VALUES (?,?,?,?,?)`)
-        .run(sponsor.id, amt, 'commission', `Level ${gen} commission (${pct}%) on product sale – Order #${order.id}`, order.id);
-      credited.push({ user_id: sponsor.id, gen, amt });
-    }
-    current = sponsor;
-  }
-  db.prepare('UPDATE orders SET commission_paid=1 WHERE id=?').run(order.id);
-  return credited;
-}
-function reverseCommissions(orderId, adminId) {
-  const rows = db.prepare("SELECT user_id, amount_paise FROM wallet_ledger WHERE order_id=? AND type='commission'").all(orderId);
-  for (const r of rows) {
-    db.prepare(`INSERT INTO wallet_ledger(user_id, amount_paise, type, reason, order_id, created_by) VALUES (?,?,?,?,?,?)`)
-      .run(r.user_id, -r.amount_paise, 'commission_reversal', `Commission reversed – Order #${orderId} was cancelled`, orderId, adminId);
-  }
-  db.prepare('UPDATE orders SET commission_paid=0 WHERE id=?').run(orderId);
-  return rows.length;
-}
 function audit(adminId, action, targetUserId, details) {
   db.prepare('INSERT INTO audit_log(admin_id, action, target_user_id, details) VALUES (?,?,?,?)')
     .run(adminId, action, targetUserId || null, typeof details === 'string' ? details : JSON.stringify(details));
 }
 
-module.exports = { db, ADMIN_PW_FROM_ENV, ADMIN_PW_SOURCE, validateUserId, USER_ID_RE, getSettings, saveSetting, newReferralCode, balance, personalVolume, downline, teamVolume, rankFor, creditCommissions, reverseCommissions, audit, DATA_DIR };
+module.exports = { db, ADMIN_PW_FROM_ENV, ADMIN_PW_SOURCE, validateUserId, USER_ID_RE, getSettings, saveSetting, newReferralCode, balance, personalVolume, downline, teamVolume, audit, DATA_DIR };

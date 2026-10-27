@@ -1,0 +1,33 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>My earnings</h1><p class="muted small">All commissions come from paid product orders. Each one is <b>pending</b> for <%= plan.cooling_off_days %> days (cooling-off / buyback window), then moves to your withdrawable wallet.</p></div></div>
+<div class="stats">
+  <div class="stat gold-card"><small>Released to wallet</small><b><%= money(e.released) %></b><a href="/wallet" class="small">Wallet →</a></div>
+  <div class="stat"><small>Pending (cooling-off)</small><b><%= money(e.pending) %></b></div>
+  <div class="stat"><small>Reversed (buyback / cancel)</small><b><%= money(e.reversed) %></b></div>
+  <div class="stat"><small>Pairs today cap</small><b><%= plan.daily_pair_cap %>/day</b><span class="small muted"><%= legs.pairs_flushed %> pairs flushed so far</span></div>
+</div>
+<div class="card">
+  <h3>Breakdown by type</h3>
+  <div class="table-wrap"><table class="table" id="earn-by-type"><thead><tr><th>Type</th><th class="r">Pending</th><th class="r">Released</th><th class="r">Reversed</th></tr></thead><tbody>
+  <% ['pair','matching','repurchase'].forEach(k => { const v = e.byType[k]; %><tr data-type="<%= k %>"><td><%= TYPE_LABEL[k] %></td><td class="r"><%= money(v.pending||0) %></td><td class="r"><%= money(v.released||0) %></td><td class="r"><%= money(v.reversed||0) %></td></tr><% }) %>
+  </tbody></table></div>
+</div>
+<div class="grid2">
+<div class="card">
+  <h3>Commission entries</h3>
+  <% if (!rows.length) { %><p class="muted small">No commissions yet. Commissions start when product orders in your team are paid and pairs match.</p><% } else { %>
+  <div class="table-wrap"><table class="table" id="earn-rows"><thead><tr><th>Date</th><th>Type</th><th>Order</th><th>Details</th><th class="r">Amount</th><th>Status</th></tr></thead><tbody>
+  <% rows.forEach(c => { %><tr><td class="small"><%= fmtDate(c.created_at) %></td><td><%= TYPE_LABEL[c.type] %><% if (c.type !== 'pair') { %> L<%= c.level %><% } %></td><td>#<%= c.source_order_id %></td><td class="small"><%= c.note %><% if (c.gross_paise !== c.amount_paise) { %> <span class="muted">(cap-scaled from <%= money(c.gross_paise) %>)</span><% } %></td><td class="r"><%= money(c.amount_paise) %></td>
+    <td><span class="pill <%= c.status==='released'?'paid':(c.status==='pending'?'pending':'cancelled') %>"><%= c.status %></span><% if (c.status==='pending') { %><br><span class="small muted">until <%= fmtDate(c.release_at) %></span><% } %></td></tr><% }) %>
+  </tbody></table></div><% } %>
+</div>
+<div class="card">
+  <h3>Daily pairs (IST)</h3>
+  <% if (!days.length) { %><p class="muted small">No pairs matched yet.</p><% } else { %>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Day</th><th class="r">Paid pairs</th><th class="r">Flushed (over cap)</th></tr></thead><tbody>
+  <% days.forEach(d => { %><tr><td><%= d.day %></td><td class="r"><%= d.pairs_paid %></td><td class="r"><%= d.pairs_flushed %></td></tr><% }) %>
+  </tbody></table></div><% } %>
+  <p class="small muted">Pairs above <%= plan.daily_pair_cap %> per day are flushed: the BV is used up and pays nothing. This is disclosed on the Income Plan.</p>
+</div>
+</div>
+<%- include('../partials/footer') %>

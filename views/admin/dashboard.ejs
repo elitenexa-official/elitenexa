@@ -4,6 +4,9 @@
   <div class="stat"><small>Members</small><b><%= stats.members %></b><span class="small muted"><%= stats.blocked %> blocked</span></div>
   <div class="stat gold-card"><small>Paid product sales</small><b><%= inr(stats.sales) %></b></div>
   <div class="stat"><small>Commissions credited (net)</small><b><%= inr(stats.commissions) %></b></div>
+  <div class="stat"><small>Commissions pending (cooling-off)</small><b><%= inr(stats.pendingComm) %></b><a class="small" href="/admin/commissions">Runs →</a></div>
+  <div class="stat"><small>Payout ratio (all time)</small><b><%= stats.payoutPct.toFixed(1) %>%</b><span class="small muted">cap <%= plan.max_payout_pct %>% per run</span></div>
+  <div class="stat"><small>Pending buybacks</small><b><%= stats.pendingBuybacks %></b><% if (!isManager) { %><a class="small" href="/admin/buybacks">Review →</a><% } %></div>
   <div class="stat"><small>Pending orders</small><b><%= stats.pendingOrders %></b><a class="small" href="/admin/orders?status=pending">Review →</a></div>
   <div class="stat"><small>Wallet balances (liability)</small><b><%= inr(stats.liability) %></b></div>
   <div class="stat"><small>Pending withdrawals</small><b><%= stats.pendingWd.n %></b><span class="small muted"><%= inr(stats.pendingWd.v) %></span></div>

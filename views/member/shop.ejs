@@ -8,7 +8,7 @@
     <div class="pimg"><img src="<%= p.image_url || '/img/sample-1.svg' %>" alt="<%= p.name %>"></div>
     <div class="pbody">
       <h3><%= p.name %></h3>
-      <div class="prow"><span class="price"><%= money(p.price_paise) %></span><% if (cur.code !== 'INR') { %> <span class="small muted inr-hint"><%= inrHint(p.price_paise) %></span><% } %><span class="small muted"><%= p.stock %> in stock</span></div>
+      <div class="prow"><span class="price"><%= money(p.price_paise) %></span><% if (cur.code !== 'INR') { %> <span class="small muted inr-hint"><%= inrHint(p.price_paise) %></span><% } %><span class="small muted"><%= Math.floor(p.price_paise * p.bv_percent / 10000) %> BV · <%= p.stock %> in stock</span></div>
       <label>Quantity<input type="number" name="qty" min="1" max="50" value="1" required></label>
       <label>Delivery address<textarea name="address" rows="2" required minlength="10" maxlength="500" placeholder="House, street, city, PIN"></textarea></label>
       <button class="btn btn-gold btn-block" <%= p.stock < 1 ? 'disabled' : '' %>>Place order</button>

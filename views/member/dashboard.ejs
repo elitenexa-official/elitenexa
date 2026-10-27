@@ -2,25 +2,26 @@
 <div class="page-title"><div><h1>Dashboard</h1><p class="muted small">User ID: <b class="gold"><%= user.username %></b> · Grow Together · Shine Together</p></div><span class="badge rank"><%= rank.current.name %></span></div>
 <div class="stats">
   <div class="stat gold-card"><small>Wallet balance</small><b><%= money(bal) %></b><a href="/wallet" class="small">View ledger →</a></div>
-  <div class="stat"><small>Personal sales volume</small><b><%= money(rank.pv*100) %></b></div>
-  <div class="stat"><small>Team sales volume</small><b><%= money(rank.tv*100) %></b></div>
-  <div class="stat"><small>Team members</small><b><%= team.length %></b><span class="small muted"><%= team.filter(t=>t.lvl===1).length %> direct</span></div>
+  <div class="stat"><small>Pending commission</small><b><%= money(pending) %></b><a href="/earnings" class="small">Earnings →</a></div>
+  <div class="stat"><small>Carry-forward BV (L / R)</small><b><%= legs.left_bv %> / <%= legs.right_bv %></b><a href="/genealogy" class="small">Genealogy →</a></div>
+  <div class="stat"><small>Binary team (L / R)</small><b><%= counts.L %> / <%= counts.R %></b><span class="small muted"><%= team.filter(t=>t.lvl===1).length %> personally sponsored</span></div>
 </div>
 <div class="grid2">
   <div class="card">
-    <h3>Your referral link</h3>
-    <p class="muted small">Share this link. You earn only when people in your team buy products and their orders are paid – never for sign-ups.</p>
-    <div class="copybox"><code><%= baseUrl %>/signup?ref=<%= user.referral_code %></code></div>
+    <h3>Your referral links</h3>
+    <p class="muted small">Share a link. New members are placed in that leg (auto-spillover to the outermost free spot). You earn only when product orders in your team are paid – never for sign-ups.</p>
+    <p class="small">Left leg</p><div class="copybox"><code><%= baseUrl %>/signup?ref=<%= user.referral_code %>&amp;leg=L</code></div>
+    <p class="small">Right leg</p><div class="copybox"><code><%= baseUrl %>/signup?ref=<%= user.referral_code %>&amp;leg=R</code></div>
     <p class="small">Your User ID: <b><%= user.username %></b> · Referral code: <b><%= user.referral_code %></b><% if (sponsor) { %> · Your sponsor: <%= sponsor.name %><% } %></p>
   </div>
   <div class="card">
     <h3>Rank progress</h3>
     <p>Current rank: <b class="gold"><%= rank.current.name %></b></p>
+    <p class="small muted">Ranks are based on cumulative matched pairs: <%= plan.ranks.map(r => r.name + ' ' + r.pairs).join(' · ') %>. Ranks are recognition only and pay no extra money.</p>
     <% if (rank.next) { %>
-      <% const pp = Math.min(100, rank.next.personal ? rank.pv / rank.next.personal * 100 : 100), tp = Math.min(100, rank.next.team ? rank.tv / rank.next.team * 100 : 100); %>
-      <p class="small muted">Next: <b><%= rank.next.name %></b> — personal <%= money(rank.next.personal*100) %> and team <%= money(rank.next.team*100) %></p>
-      <div class="bar"><span style="width:<%= pp.toFixed(0) %>%"></span></div><p class="small muted">Personal <%= pp.toFixed(0) %>%</p>
-      <div class="bar"><span style="width:<%= tp.toFixed(0) %>%"></span></div><p class="small muted">Team <%= tp.toFixed(0) %>%</p>
+      <% const pp = Math.min(100, rank.pairs / rank.next.pairs * 100); %>
+      <p class="small muted">Next: <b><%= rank.next.name %></b> — <%= rank.pairs %> / <%= rank.next.pairs %> pairs</p>
+      <div class="bar"><span style="width:<%= pp.toFixed(0) %>%"></span></div>
     <% } else { %><p class="small muted">You have reached the top rank.</p><% } %>
   </div>
 </div>

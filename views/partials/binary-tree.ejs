@@ -1,0 +1,26 @@
+<%
+  const byPos = {}; t.nodes.forEach(n => byPos[n.pos] = n);
+  const levels = []; for (let l = 0; l <= t.depth; l++) { const row = []; const gen = (p) => { if (p.length === l) { row.push(p); return; } gen(p + 'L'); gen(p + 'R'); }; gen(''); levels.push(row); }
+  const bv = (v) => Number(v || 0).toLocaleString('en-IN');
+%>
+<div class="tree-wrap"><div class="btree">
+<% levels.forEach((row, l) => { %>
+  <div class="tree-row lvl<%= l %>">
+  <% row.forEach(p => { const n = byPos[p]; %>
+    <div class="tnode-cell">
+    <% if (n && !n.empty) { %>
+      <a class="tnode<%= l === 0 ? ' root' : '' %><%= n.status !== 'active' ? ' blocked' : '' %>" href="<%= base %>?u=<%= encodeURIComponent(n.username) %>" title="Sponsor: <%= n.sponsor || '—' %> · placed <%= n.side || 'root' %>">
+        <b><%= n.name %></b><small><%= n.username %> · <%= n.rank %></small>
+        <span class="tbv"><span>L <%= bv(n.legs.left_bv) %></span><span>R <%= bv(n.legs.right_bv) %></span></span>
+        <span class="tbv tot"><span>Σ <%= bv(n.legs.total_left) %></span><span>Σ <%= bv(n.legs.total_right) %></span></span>
+        <small class="muted"><%= n.legs.pairs_total %> pairs</small>
+      </a>
+    <% } else if (n && n.empty) { %>
+      <div class="tnode empty"><small><%= p.slice(-1) === 'L' ? 'Left' : 'Right' %> slot free</small></div>
+    <% } else { %><div class="tnode none"></div><% } %>
+    </div>
+  <% }) %>
+  </div>
+<% }) %>
+</div></div>
+<p class="small muted">L / R = carry-forward BV waiting to be matched (can be negative after a buyback or cancellation reverses BV) · Σ = total BV ever received in that leg · click a member to view their tree.</p>

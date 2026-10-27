@@ -48,8 +48,8 @@
       <h2>Transparent by design</h2>
       <p class="muted">Every rupee in your EliteNexa wallet is backed by a real, paid product order or a documented adjustment. Your wallet shows a complete ledger with the reason for every credit and debit.</p>
       <ul class="checks">
-        <li>Commission on paid orders: <b><%= settings.commission_levels.map((p,i) => 'Level ' + (i+1) + ' ' + p + '%').join(' · ') %></b></li>
-        <li>Ranks (<%= settings.ranks.map(r => r.name).join(', ') %>) based on product sales volume</li>
+        <li>Binary pair commission: <b><%= plan.pair_pct %>% of each <%= plan.pair_bv %> BV pair</b> (max <%= plan.daily_pair_cap %> pairs/day), from paid product orders only</li>
+        <li>Matching bonus <%= plan.matching_pcts.join('% / ') %>% · repurchase <%= plan.repurchase_pcts.reduce((a,b)=>a+b,0) %>% · ranks <%= plan.ranks.map(r => r.name).join(', ') %></li>
         <li>Withdrawals reviewed and paid to your bank / UPI</li>
       </ul>
       <a class="btn btn-gold" href="/income-plan">Read the full income plan</a>

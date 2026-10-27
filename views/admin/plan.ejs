@@ -1,0 +1,32 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Plan settings</h1><p class="muted small">Binary compensation plan · admin only · every change is audit-logged and published immediately on the public <a href="/income-plan">Income Plan</a>.</p></div></div>
+<% if (typeof error !== 'undefined') { %><div class="alert alert-err"><%= error %></div><% } %>
+<form method="post" action="/admin/plan" class="card form" id="plan-form">
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <h3>Pair commission</h3>
+  <div class="row3">
+    <label>BV per pair (each side)<input type="number" name="pair_bv" min="1" step="1" required value="<%= p.pair_bv %>"></label>
+    <label>Pair commission % of pair BV<input type="number" name="pair_pct" min="0" max="50" step="0.01" required value="<%= p.pair_pct %>"></label>
+    <label>Daily pair cap per member<input type="number" name="daily_pair_cap" min="1" step="1" required value="<%= p.daily_pair_cap %>"></label>
+  </div>
+  <h3>Matching &amp; repurchase</h3>
+  <div class="row2">
+    <label>Matching bonus % per sponsor level (of pair income)<input name="matching_pcts" required value="<%= p.matching_pcts.join(', ') %>"></label>
+    <label>Repurchase % per sponsor level (of repurchase BV)<input name="repurchase_pcts" required value="<%= p.repurchase_pcts.join(', ') %>"></label>
+  </div>
+  <h3>Safety, cooling-off &amp; buyback</h3>
+  <div class="row3">
+    <label>Max payout % of a run's sales (hard cap)<input type="number" name="max_payout_pct" min="1" max="50" step="0.01" required value="<%= p.max_payout_pct %>"></label>
+    <label>Cooling-off days before release<input type="number" name="cooling_off_days" min="0" max="120" step="1" required value="<%= p.cooling_off_days %>"></label>
+    <label>Buyback window (days)<input type="number" name="buyback_days" min="0" max="120" step="1" required value="<%= p.buyback_days %>"></label>
+    <label>Buyback refund %<input type="number" name="buyback_refund_pct" min="0" max="100" step="0.01" required value="<%= p.buyback_refund_pct %>"></label>
+    <label>Default BV % for new products<input type="number" name="default_bv_pct" min="0" max="100" step="0.01" required value="<%= p.default_bv_pct %>"></label>
+  </div>
+  <h3>Ranks (cumulative matched pairs)</h3>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Rank name</th><th>Pairs ≥</th></tr></thead><tbody>
+  <% p.ranks.concat([{name:'',pairs:''}]).forEach(r => { %><tr><td><input name="rank_name" value="<%= r.name %>" placeholder="(add rank)"></td><td><input type="number" min="1" name="rank_pairs" value="<%= r.pairs %>"></td></tr><% }) %>
+  </tbody></table></div>
+  <p class="small muted">Rules enforced: income only from paid product BV; nothing for joining; matching total ≤ 20%; repurchase total ≤ 30%; payout cap 1–50%; cooling-off ≥ buyback window. New values apply to orders paid from now on; existing commissions are not recalculated. Defaults: pair <%= defaults.pair_bv %> BV at <%= defaults.pair_pct %>%, cap <%= defaults.daily_pair_cap %>/day, matching <%= defaults.matching_pcts.join('/') %>%, repurchase <%= defaults.repurchase_pcts.join('/') %>%, max payout <%= defaults.max_payout_pct %>%.</p>
+  <button class="btn btn-gold">Save plan settings</button>
+</form>
+<%- include('../partials/footer') %>

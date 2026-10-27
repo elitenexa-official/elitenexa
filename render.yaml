@@ -1,6 +1,7 @@
 # Render Blueprint – free demo web service for EliteNexa.
 # NOTE: the free plan has no persistent disk, so the SQLite DB (data/) resets on every restart/spin-down.
-# On a fresh DB the app seeds 4 sample products and the 'admin' account (password from ADMIN_PASSWORD_HASH or ADMIN_PASSWORD).
+# On a fresh DB the app seeds sample products (incl. the ₹1,199 Starter Kit) and the 'admin' account (password from ADMIN_PASSWORD_HASH or ADMIN_PASSWORD).
+# DEMO_MODE=1 also seeds 20 demo members + back-dated paid orders for the binary plan (labelled demo data). Set to 0 for real use.
 services:
   - type: web
     name: elitenexa

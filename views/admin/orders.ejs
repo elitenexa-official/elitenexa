@@ -1,15 +1,15 @@
 <%- include('../partials/header') %>
 <div class="page-title"><h1>Orders</h1>
-<div class="tabs"><% [['','All'],['pending','Pending'],['paid','Paid'],['delivered','Delivered'],['cancelled','Cancelled']].forEach(([k,l]) => { %><a href="/admin/orders<%= k ? '?status='+k : '' %>" class="<%= status===k?'on':'' %>"><%= l %></a><% }) %></div></div>
+<div class="tabs"><% [['','All'],['pending','Pending'],['paid','Paid'],['delivered','Delivered'],['cancelled','Cancelled'],['returned','Returned']].forEach(([k,l]) => { %><a href="/admin/orders<%= k ? '?status='+k : '' %>" class="<%= status===k?'on':'' %>"><%= l %></a><% }) %></div></div>
 <div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th>Member</th><th>Product</th><th class="r">Total</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-<% const T = { pending: ['paid','cancelled'], paid: ['delivered','cancelled'], delivered: [], cancelled: [] }; %>
+<% const T = { pending: ['paid','cancelled'], paid: ['delivered','cancelled'], delivered: [], cancelled: [], returned: [] }; %>
 <% orders.forEach(o => { %><tr>
   <td><%= o.id %></td><td class="small"><%= fmtDate(o.created_at) %></td><td><b><%= o.member %></b><br><span class="small muted"><%= o.email %> <%= o.phone||'' %></span></td>
   <td><%= o.product_name %> × <%= o.qty %><br><span class="small muted"><%= o.address %></span></td><td class="r"><%= inr(o.total_paise) %></td>
-  <td><span class="pill <%= o.status %>"><%= o.status %></span><% if (o.commission_paid) { %><br><span class="small ok">commission credited</span><% } %></td>
+  <td><span class="pill <%= o.status %>"><%= o.status %></span><br><span class="small muted"><%= o.bv_total %> BV</span><% if (o.bv_processed) { %> <span class="small ok">· in commission run</span><% } %></td>
   <td class="nowrap"><% T[o.status].filter(to => !isManager || to === 'paid' || to === 'cancelled').forEach(to => { %><form method="post" action="/admin/orders/<%= o.id %>/status" class="inline <%= to==='cancelled'?'confirm':'' %>"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="status" value="<%= to %>"><input type="hidden" name="back_status" value="<%= status %>"><button class="btn btn-sm <%= to==='cancelled'?'btn-danger':'btn-gold' %>">Mark <%= to %></button></form> <% }) %></td>
 </tr><% }) %>
 <% if (!orders.length) { %><tr><td colspan="7" class="muted">No orders.</td></tr><% } %>
 </tbody></table></div>
-<p class="small muted">Marking an order <b>paid</b> automatically credits upline commissions per Settings. Cancelling a paid order reverses them and restores stock.</p></div>
+<p class="small muted">Marking an order <b>paid</b> adds its BV to the binary tree and records the resulting commissions as <b>pending</b> (released after the cooling-off period). Cancelling a paid order removes its BV, reverses its commissions and restores stock.</p></div>
 <%- include('../partials/footer') %>

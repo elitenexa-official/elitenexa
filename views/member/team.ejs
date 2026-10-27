@@ -10,6 +10,6 @@
 <div class="table-wrap"><table class="table"><thead><tr><th>Level</th><th>Name</th><th>Sponsor</th><th>Joined</th><th>Status</th><th class="r">Sales volume (paid)</th></tr></thead><tbody>
 <% team.forEach(t => { %><tr><td>L<%= t.lvl %></td><td><%= t.name %></td><td class="small"><%= t.sponsor_name %></td><td class="small"><%= fmtDate(t.created_at) %></td><td><span class="pill <%= t.status==='active'?'paid':'cancelled' %>"><%= t.status %></span></td><td class="r"><%= money(t.volume) %></td></tr><% }) %>
 </tbody></table></div><% } %>
-<p class="small muted">Commission applies to levels 1–<%= s.commission_levels.length %> (<%= s.commission_levels.map((p,i)=>'L'+(i+1)+' '+p+'%').join(', ') %>) on paid product orders only.</p>
+<p class="small muted">This list is your <b>sponsor</b> team (people you and your team personally invited). Your binary placement tree is on the <a href="/genealogy">Genealogy</a> page. Matching bonus: <%= plan.matching_pcts.map((p,i)=>'L'+(i+1)+' '+p+'%').join(', ') %> of the pair income of sponsored members; repurchase: <%= plan.repurchase_pcts.map((p,i)=>'L'+(i+1)+' '+p+'%').join(', ') %> of repurchase BV.</p>
 </div>
 <%- include('../partials/footer') %>

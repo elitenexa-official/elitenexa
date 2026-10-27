@@ -23,7 +23,7 @@
 </head>
 <%
   const isAdmin = path.startsWith('/admin') && isStaff;
-  const memberPaths = ['/dashboard','/profile','/shop','/orders','/team','/wallet'];
+  const memberPaths = ['/dashboard','/profile','/shop','/orders','/team','/wallet','/genealogy','/earnings'];
   const isMember = !!user && memberPaths.some(p => path === p || path.startsWith(p + '/'));
   const shell = isAdmin ? 'admin' : (isMember ? 'member' : 'public');
 %>
@@ -62,13 +62,13 @@
       <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>EliteNexa</b><small><%= isManager ? 'Approval Manager' : 'Admin panel' %> · <%= user.username %></small></div></div>
       <% (isManager
           ? [['/admin','Dashboard'],['/admin/orders','Orders'],['/admin/withdrawals','Withdrawals']]
-          : [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/managers','Approval Managers'],['/admin/currencies','Currencies'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']]
+          : [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/buybacks','Buybacks'],['/admin/commissions','Commission runs'],['/admin/genealogy','Genealogy'],['/admin/plan','Plan settings'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/managers','Approval Managers'],['/admin/currencies','Currencies'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']]
         ).forEach(([h,l]) => { %>
         <a href="<%= h %>" class="<%= (path===h || (h!=='/admin' && path.startsWith(h))) ? 'on' : '' %>"><%= l %></a>
       <% }) %>
     <% } else { %>
       <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>Hi, <%= user.name.split(' ')[0] %></b><small>ID: <%= user.username %></small></div></div>
-      <% [['/dashboard','Dashboard'],['/shop','Place order'],['/orders','My orders'],['/team','My team'],['/wallet','Wallet'],['/profile','Profile'],['/profile/password','Change password']].forEach(([h,l]) => { %>
+      <% [['/dashboard','Dashboard'],['/shop','Place order'],['/orders','My orders'],['/team','My team'],['/genealogy','Genealogy'],['/earnings','My earnings'],['/wallet','Wallet'],['/profile','Profile'],['/profile/password','Change password']].forEach(([h,l]) => { %>
         <a href="<%= h %>" class="<%= path===h ? 'on' : '' %>"><%= l %></a>
       <% }) %>
     <% } %>

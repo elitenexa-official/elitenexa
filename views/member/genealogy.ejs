@@ -1,0 +1,16 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Genealogy</h1><p class="muted small">Your binary team (placement tree), <%= t.depth %> levels deep.</p></div><span class="badge rank"><%= rank.current.name %></span></div>
+<div class="stats">
+  <div class="stat"><small>Left leg members</small><b><%= counts.L %></b></div>
+  <div class="stat"><small>Right leg members</small><b><%= counts.R %></b></div>
+  <div class="stat"><small>Carry-forward BV (L / R)</small><b><%= legs.left_bv %> / <%= legs.right_bv %></b></div>
+  <div class="stat"><small>Pairs matched (paid / flushed)</small><b><%= legs.pairs_paid %> / <%= legs.pairs_flushed %></b></div>
+</div>
+<div class="card">
+  <div class="section-head"><h3><%= isSelf ? 'Your tree' : 'Tree of ' + t.nodes[0].username %></h3>
+    <span><% if (!isSelf) { %><% if (up) { %><a class="link small" href="/genealogy?u=<%= encodeURIComponent(up) %>">↑ Up one level</a> · <% } %><a class="link small" href="/genealogy">Back to me</a><% } %></span></div>
+  <form method="get" action="/genealogy" class="inline form-inline"><input name="u" placeholder="Find a User ID in your team" value=""><button class="btn btn-sm btn-outline">View</button></form>
+  <%- include('../partials/binary-tree', { t, base: '/genealogy' }) %>
+</div>
+<p class="disclaimer small">One pair = <%= plan.pair_bv %> BV on the left matched with <%= plan.pair_bv %> BV on the right, from <b>paid product orders only</b>. New sign-ups add no BV. See the <a href="/income-plan">Income Plan</a>.</p>
+<%- include('../partials/footer') %>

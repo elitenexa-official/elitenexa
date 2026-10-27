@@ -11,14 +11,25 @@ def check(name, cond, info=''):
     results.append((name, bool(cond))); print(('PASS ' if cond else 'FAIL ') + name + (f'  [{info}]' if info else ''))
 def money(txt): return float(re.sub(r'[^\d.\-]', '', txt))
 import time; run = str(int(time.time()))[-6:]
+DBF = os.environ.get('E2E_DB') or (os.path.join(ROOT, 'data', 'elitenexa.db') if BASE.startswith('http://127.0.0.1:3100') else '')
+def sql(query, *params):
+    """Run one SQL statement directly on the test DB (used to inspect state and to fast-forward the cooling-off clock)."""
+    out = subprocess.run(['node', '-e', "const d=require('better-sqlite3')(process.argv[1]);d.pragma('busy_timeout = 5000');const s=d.prepare(process.argv[2]);const p=JSON.parse(process.argv[3]);process.stdout.write(JSON.stringify(s.reader?s.all(...p):s.run(...p)))", DBF, query, json.dumps(list(params))], capture_output=True, text=True, cwd=ROOT)
+    if out.returncode: raise RuntimeError(out.stderr[-400:])
+    return json.loads(out.stdout or 'null')
+def uid_of(username): return sql('SELECT id FROM users WHERE lower(username)=lower(?)', username)[0]['id']
+def legs_of(username):
+    r = sql('SELECT l.* FROM binary_legs l JOIN users u ON u.id=l.user_id WHERE lower(u.username)=lower(?)', username)
+    return r[0] if r else {'left_bv': 0, 'right_bv': 0, 'total_left': 0, 'total_right': 0, 'pairs_total': 0, 'pairs_paid': 0, 'pairs_flushed': 0}
+def comms(where, *params): return sql('SELECT c.*, u.username ben FROM commissions c JOIN users u ON u.id=c.beneficiary_id WHERE ' + where + ' ORDER BY c.id', *params)
 
 with sync_playwright() as p:
     b = p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
     def ctx(): 
         c = b.new_context(viewport={'width': 1366, 'height': 860}); pg = c.new_page()
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e))); pg.errs = errs; return pg
-    def signup(pg, name, email, ref=None, userid=None, country=None):
-        pg.goto(BASE + '/signup' + (f'?ref={ref}' if ref else ''))
+    def signup(pg, name, email, ref=None, userid=None, country=None, leg=None):
+        pg.goto(BASE + '/signup' + (f'?ref={ref}' if ref else '') + (f'&leg={leg}' if leg and ref else ''))
         userid = userid or email.split('@')[0]
         pg.fill('[name=name]', name); pg.fill('[name=userid]', userid); pg.fill('[name=email]', email); pg.fill('[name=phone]', '9876543210')
         if country: pg.select_option('#country', country)
@@ -94,7 +105,7 @@ with sync_playwright() as p:
     C.wait_for_url('**/orders'); ot = C.inner_text('main')
     oid = re.search(r'Order #(\d+) placed', ot).group(1)
     check('order placed with pending status', 'pending' in ot.lower(), f'order #{oid}, total {price*2}')
-    check('no commission before payment', balance(B) == 0 and balance(A) == 0)
+    check('no commission before payment', balance(B) == 0 and balance(A) == 0 and not comms('source_order_id=?', int(oid)))
 
     AD = ctx(); AD.goto(BASE + '/admin/login'); AD.fill('[name=login]', 'admin'); AD.fill('[name=password]', ADMIN_PW); AD.click('button:has-text("Log in")')
     AD.wait_for_url('**/admin'); check('admin login', AD.url.endswith('/admin'))
@@ -102,11 +113,10 @@ with sync_playwright() as p:
     AD.locator(f'form[action="/admin/orders/{oid}/status"]:has(input[value=paid]) button').click(); AD.wait_for_load_state()
     msg = AD.inner_text('.alert'); print('   admin msg:', msg)
     total = price * 2
-    bB, bA = balance(B), balance(A)
-    check('L1 commission 10% credited to B', abs(bB - round(total * 0.10, 2)) < 0.01, f'{bB}')
-    check('L2 commission 5% credited to A', abs(bA - round(total * 0.05, 2)) < 0.01, f'{bA}')
+    bvC = sql('SELECT bv_total FROM orders WHERE id=?', int(oid))[0]['bv_total']
+    check('paid order: BV added to the binary tree (no old level commission)', 'BV added to the binary tree' in msg and bvC > 0 and legs_of(f'ravi{run}')['left_bv'] == bvC and legs_of(uidA)['left_bv'] == bvC, msg[:160])
+    check('one-leg BV pays nothing (no pair yet)', balance(B) == 0 and balance(A) == 0 and not comms('source_order_id=?', int(oid)))
     check('buyer C gets no commission for own order', balance(C) == 0)
-    check('ledger shows reason', 'Level 1 commission (10%)' in B.inner_text('main'))
     # paid twice prevention
     AD.goto(BASE + '/admin/orders'); check('paid order no longer offers "Mark paid"', AD.locator(f'form[action="/admin/orders/{oid}/status"]:has(input[value=paid])').count() == 0)
 
@@ -118,12 +128,12 @@ with sync_playwright() as p:
     AD.goto(BASE + f'/admin/wallet?member={aid}')
     AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '500'); AD.fill('[name=reason]', 'abc'); AD.evaluate("document.querySelector('[name=reason]').removeAttribute('minlength')")
     AD.click('button:has-text("Apply adjustment")'); check('adjustment without proper reason rejected', 'reason' in AD.inner_text('.alert').lower() and 'mandatory' in AD.inner_text('.alert').lower())
-    AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '500'); AD.fill('[name=reason]', 'Festive bonus correction – approved by management')
+    AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '600'); AD.fill('[name=reason]', 'Festive bonus correction – approved by management')
     AD.click('button:has-text("Apply adjustment")'); AD.wait_for_load_state()
     AD.select_option('[name=type]', 'debit'); AD.fill('[name=amount]', '50'); AD.fill('[name=reason]', 'Courier charge recovery for order #' + oid)
     AD.click('button:has-text("Apply adjustment")'); AD.wait_for_load_state()
-    exp = round(total * 0.05 + 500 - 50, 2); bA = balance(A)
-    check('manual credit ₹500 + debit ₹50 applied', abs(bA - exp) < 0.01, f'{bA} vs {exp}')
+    exp = round(600 - 50, 2); bA = balance(A)
+    check('manual credit ₹600 + debit ₹50 applied', abs(bA - exp) < 0.01, f'{bA} vs {exp}')
     AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main')
     check('audit log records admin + reason', 'wallet credit' in au and 'wallet debit' in au and 'Festive bonus' in au)
     AD.goto(BASE + f'/admin/wallet?member={aid}'); AD.wait_for_load_state('networkidle')
@@ -142,7 +152,7 @@ with sync_playwright() as p:
     A.goto(BASE + '/wallet'); check('member sees approved withdrawal', 'UTR123456789' in A.inner_text('main'))
 
     AD.goto(BASE + '/admin/members?q=' + codeB); bid = re.search(r'member=(\d+)', AD.locator('a[href*="/admin/wallet?member="]').first.get_attribute('href')).group(1)
-    AD.goto(BASE + f'/admin/wallet?member={bid}'); AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '300'); AD.fill('[name=reason]', 'Test credit for withdrawal rejection flow'); AD.click('button:has-text("Apply adjustment")')
+    AD.goto(BASE + f'/admin/wallet?member={bid}'); AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '600'); AD.fill('[name=reason]', 'Test credit for withdrawal rejection flow'); AD.click('button:has-text("Apply adjustment")')
     before = balance(B); B.fill('[name=amount]', '500'); B.fill('[name=payout_details]', 'ravi@upi'); B.click('button:has-text("Submit request")')
     AD.goto(BASE + '/admin/withdrawals'); row = AD.locator('tr', has_text='ravi@upi').first
     row.locator('[name=reason]').fill('KYC pending – please upload PAN'); row.locator('button[value=reject]').click(); AD.wait_for_load_state()
@@ -164,12 +174,14 @@ with sync_playwright() as p:
     check('manager sidebar shows only allowed links', all(x in side for x in ('Dashboard', 'Orders', 'Withdrawals')) and not any(x in side for x in ('Wallet adjustments', 'Products', 'Members', 'Settings', 'Audit', 'Approval Managers', 'Messages', 'Change password')))
     for path in ('/admin', '/admin/orders', '/admin/orders?status=pending', '/admin/withdrawals'):
         r = MG.goto(BASE + path); check(f'manager allowed GET {path}', r.status == 200 and '/login' not in MG.url, r.status)
-    for path in ('/admin/wallet', '/admin/products', '/admin/products/new', '/admin/products/1/edit', '/admin/members', '/admin/settings', '/admin/managers', '/admin/audit', '/admin/messages', '/admin/password'):
+    for path in ('/admin/wallet', '/admin/products', '/admin/products/new', '/admin/products/1/edit', '/admin/members', '/admin/settings', '/admin/managers', '/admin/audit', '/admin/messages', '/admin/password', '/admin/plan', '/admin/buybacks', '/admin/commissions', '/admin/genealogy'):
         r = MG.goto(BASE + path); check(f'manager forbidden GET {path} -> 403', r.status == 403, r.status)
     MG.goto(BASE + '/admin'); mtok = MG.locator('input[name=_csrf]').first.input_value()
     for path, data in (('/admin/wallet/adjust', {'user_id': '1', 'type': 'credit', 'amount': '100', 'reason': 'manager should not do this'}),
                        ('/admin/products/save', {'name': 'Hack', 'price': '1', 'stock': '1'}), ('/admin/products/1/delete', {}),
-                       ('/admin/members/1/status', {'status': 'blocked'}), ('/admin/settings', {'commission_levels': '50'}),
+                       ('/admin/members/1/status', {'status': 'blocked'}), ('/admin/settings', {'team_depth': '9'}),
+                       ('/admin/plan', {'pair_bv': '719', 'pair_pct': '25', 'daily_pair_cap': '1000', 'matching_pcts': '20', 'repurchase_pcts': '30', 'max_payout_pct': '50', 'cooling_off_days': '0', 'buyback_days': '0', 'buyback_refund_pct': '0', 'default_bv_pct': '100', 'rank_name': 'X', 'rank_pairs': '1'}),
+                       ('/admin/commissions/run', {}), ('/admin/buybacks/1', {'action': 'reject', 'reason': 'manager should not'}),
                        ('/admin/managers', {'name': 'X', 'username': 'mgrhack1', 'new_password': 'x' * 14, 'confirm_password': 'x' * 14}),
                        ('/admin/password', {'current_password': MG_PW, 'new_password': 'y' * 14, 'confirm_password': 'y' * 14})):
         r = MG.request.post(BASE + path, form={'_csrf': mtok, **data}, max_redirects=0); check(f'manager forbidden POST {path} -> 403', r.status == 403, r.status)
@@ -180,7 +192,7 @@ with sync_playwright() as p:
     C.wait_for_url('**/orders'); oid2 = re.search(r'Order #(\d+) placed', C.inner_text('main')).group(1)
     MG.goto(BASE + '/admin/orders?status=pending'); check('manager sees no "Mark delivered" buttons', MG.locator('input[name=status][value=delivered]').count() == 0)
     MG.locator(f'form[action="/admin/orders/{oid2}/status"]:has(input[name=status][value=paid]) button').click(); MG.wait_for_load_state()
-    check('manager marks order paid (commission credited)', f'Order #{oid2} marked paid' in MG.inner_text('.alert'), MG.inner_text('.alert')[:120])
+    check('manager marks order paid (BV recorded)', f'Order #{oid2} marked paid' in MG.inner_text('.alert'), MG.inner_text('.alert')[:120])
     r = MG.request.post(BASE + f'/admin/orders/{oid2}/status', form={'_csrf': mtok, 'status': 'delivered'}, max_redirects=0)
     MG.goto(BASE + '/admin/orders'); check('manager cannot mark delivered', 'only mark orders paid or cancelled' in MG.inner_text('main'))
 
@@ -221,7 +233,7 @@ with sync_playwright() as p:
     check('visitor country stored in cookie', any(c['name'] == 'enx_country' and 'South' in c['value'] for c in V.context.cookies()))
     check('non-India footer note', 'Direct selling rules differ by country; check your local regulations before joining.' in V.inner_text('#footer-country-note'))
     V.goto(BASE + '/income-plan'); ip = V.inner_text('main')
-    check('income plan: country note + amounts in R', 'Direct selling rules differ by country; check your local regulations before joining.' in V.inner_text('#country-note') and f'on a r{1000*zar:,.2f} sale' in ip.lower(), ip[:80])
+    check('income plan: country note + amounts in R', 'Direct selling rules differ by country; check your local regulations before joining.' in V.inner_text('#country-note') and f'= r{71.90*zar:,.2f} per pair' in ip.lower(), ip[:80])
     with V.expect_navigation(): V.select_option('#country-select', 'United Kingdom')
     check('switch to United Kingdom shows £', V.inner_text('#cur-badge') == 'GBP' and '£' in V.inner_text('main'))
     with V.expect_navigation(): V.select_option('#country-select', 'India')
@@ -256,7 +268,6 @@ with sync_playwright() as p:
     check('approval page shows INR + requested ZAR + rate', exp_inr in wzt and 'Requested R150.00' in wzt and f'1 INR = {zar:g} ZAR' in wzt, wzt[:200])
     wz.locator('[name=reference]').fill('UTRZA' + run[-6:]); wz.locator('button[value=approve]').click(); MG.wait_for_load_state()
     check('manager approved ZAR withdrawal', 'approved' in MG.inner_text('.alert'))
-    DBF = os.environ.get('E2E_DB') or (os.path.join(ROOT, 'data', 'elitenexa.db') if BASE.startswith('http://127.0.0.1:3100') else '')
     if DBF and os.path.isfile(DBF):
         row = subprocess.run(['node', '-e', "const d=require('better-sqlite3')(process.argv[1],{readonly:true});process.stdout.write(JSON.stringify(d.prepare('SELECT w.amount_paise,w.req_currency,w.req_amount,w.fx_rate,w.status FROM withdrawals w JOIN users u ON u.id=w.user_id WHERE u.email=? ORDER BY w.id DESC').get(process.argv[2])))", DBF, f'thabo{run}@example.com'], capture_output=True, text=True, cwd=ROOT).stdout
         j = json.loads(row or '{}'); check('DB stores INR paise + ZAR amount + rate', j.get('amount_paise') == exp_paise and j.get('req_currency') == 'ZAR' and j.get('req_amount') == 150 and abs(j.get('fx_rate', 0) - zar) < 1e-12 and j.get('status') == 'approved', row)
@@ -297,16 +308,16 @@ with sync_playwright() as p:
     login(M3, mguid, MG_PW2); check('new manager password works', M3.url.endswith('/admin'))
     AD.goto(BASE + '/admin/managers'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/15-admin-managers.png', full_page=True)
 
-    # cancel a paid order -> commission reversal
-    C.goto(BASE + '/shop'); f = C.locator('form.product').nth(1); p2 = money(f.locator('.price').inner_text())
+    # cancel a paid order -> its BV is removed from the tree again
+    C.goto(BASE + '/shop'); f = C.locator('form.product').nth(1)
     f.locator('[name=address]').fill('12 MG Road, Pune 411001'); f.locator('button').click(); C.wait_for_url('**/orders')
     oid2 = re.search(r'Order #(\d+) placed', C.inner_text('main')).group(1)
-    b0 = balance(B)
+    l0 = legs_of(f'ravi{run}')['left_bv']
     AD.goto(BASE + '/admin/orders'); AD.locator(f'form[action="/admin/orders/{oid2}/status"]:has(input[value=paid]) button').click(); AD.wait_for_load_state()
-    b1 = balance(B)
+    bv2 = sql('SELECT bv_total FROM orders WHERE id=?', int(oid2))[0]['bv_total']; l1 = legs_of(f'ravi{run}')['left_bv']
     AD.on('dialog', lambda d: d.accept())
     AD.goto(BASE + '/admin/orders'); AD.locator(f'form[action="/admin/orders/{oid2}/status"]:has(input[value=cancelled]) button').click(); AD.wait_for_load_state()
-    check('cancel after paid reverses commission', abs(b1 - b0 - p2 * 0.10) < 0.01 and abs(balance(B) - b0) < 0.01, f'{b0}->{b1}->{balance(B)}')
+    check('cancel after paid removes the order BV', bv2 > 0 and l1 - l0 == bv2 and legs_of(f'ravi{run}')['left_bv'] == l0, f'{l0}->{l1}->{legs_of(f"ravi{run}")["left_bv"]}')
     # mark first order delivered
     AD.goto(BASE + '/admin/orders'); AD.locator(f'form[action="/admin/orders/{oid}/status"]:has(input[value=delivered]) button').click(); AD.wait_for_load_state()
     check('order marked delivered', 'delivered' in AD.inner_text('.alert'))
@@ -319,12 +330,171 @@ with sync_playwright() as p:
     AD.locator('tr', has_text=f'Test Product {run}').locator('button:has-text("Delete")').click(); AD.wait_for_load_state()
     check('admin deletes product', f'Test Product {run}' not in AD.inner_text('main'))
 
-    # settings change reflects on income plan
-    AD.goto(BASE + '/admin/settings'); AD.fill('[name=commission_levels]', '10, 5, 2, 1'); AD.click('button:has-text("Save settings")')
-    pub.goto(BASE + '/income-plan'); check('settings change shows on income plan', 'Level 4' in pub.inner_text('main'))
-    AD.goto(BASE + '/admin/settings'); AD.fill('[name=commission_levels]', '10, 5, 2'); AD.click('button:has-text("Save settings")')
-    AD.fill('[name=commission_levels]', '40, 30'); AD.click('button:has-text("Save settings")')
-    check('settings reject >60% total payout', 'cannot exceed 60%' in AD.inner_text('.alert'))
+    # ---------- Plan settings (admin) -> public income plan ----------
+    AD.goto(BASE + '/admin/plan'); AD.wait_for_load_state('networkidle')
+    check('plan settings page shows sample-plan defaults', AD.locator('[name=pair_bv]').input_value() == '719' and AD.locator('[name=pair_pct]').input_value() == '10' and AD.locator('[name=daily_pair_cap]').input_value() == '10' and AD.locator('[name=max_payout_pct]').input_value() == '38')
+    AD.screenshot(path=f'{SHOTS}/22-admin-plan-settings.png', full_page=True)
+    def set_plan(**kw):
+        AD.goto(BASE + '/admin/plan')
+        for k, v in kw.items(): AD.fill(f'[name={k}]', str(v))
+        AD.click('button:has-text("Save plan settings")'); AD.wait_for_load_state()
+        return AD.inner_text('main')
+    t = set_plan(pair_pct=12); check('admin saves plan settings', 'Plan settings saved (pair_pct)' in t, t[:120])
+    pub.goto(BASE + '/income-plan'); check('plan change shows on income plan', '12%' in pub.inner_text('#plan-terms') and '₹86.28 per pair' in pub.inner_text('#plan-terms'))
+    AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main'); check('plan change audit-logged with before/after', 'plan settings updated' in au and '"pair_pct":10' in au and '"pair_pct":12' in au)
+    set_plan(pair_pct=10)
+    t = set_plan(matching_pcts='15, 10'); check('plan settings reject matching > 20%', 'total ≤ 20%' in t)
+    AD.goto(BASE + '/admin/plan'); check('rejected plan not saved', AD.locator('[name=matching_pcts]').input_value() == '5, 3')
+    t = set_plan(cooling_off_days=10); check('plan settings reject cooling-off < buyback window', 'cannot be shorter' in t)
+    r = M3.goto(BASE + '/admin/plan'); check('manager cannot access plan settings (403)', r.status == 403 and '/login' not in M3.url, r.status)
+    M3.goto(BASE + '/admin'); check('manager sidebar has no Plan settings / Buybacks', 'Plan settings' not in M3.inner_text('aside.side') and 'Buybacks' not in M3.inner_text('aside.side'))
+
+    # ---------- Binary plan: placement + spillover ----------
+    def order(pg, name='EliteNexa Starter Kit', qty=1):
+        pg.goto(BASE + '/shop'); f = pg.locator('form.product', has_text=name).first
+        f.locator('[name=qty]').fill(str(qty)); f.locator('[name=address]').fill('21 Park Street, Kolkata 700016'); f.locator('button').click()
+        pg.wait_for_url('**/orders'); return int(re.search(r'Order #(\d+) placed', pg.inner_text('main')).group(1))
+    def mark(oid, to='paid'):
+        AD.goto(BASE + '/admin/orders?status=' + ('pending' if to == 'paid' else 'paid'))
+        AD.locator(f'form[action="/admin/orders/{oid}/status"]:has(input[name=status][value={to}]) button').click(); AD.wait_for_load_state()
+        return AD.inner_text('.alert')
+    def place(u):
+        r = sql('SELECT lower(p.username) parent, u.placement_side side, lower(s.username) sponsor FROM users u LEFT JOIN users p ON p.id=u.placement_parent_id LEFT JOIN users s ON s.id=u.sponsor_id WHERE lower(u.username)=lower(?)', u)[0]
+        return (r['parent'], r['side'], r['sponsor'])
+    pub.goto(BASE + '/signup?ref=ENX&leg=R'); check('signup form offers leg choice (pre-selected from link)', pub.locator('#leg option:checked').get_attribute('value') == 'R')
+    uR, uL1, uR1, uL2, uR2, uX, uXL, uXR = [f'{p}{run}' for p in ('bnr', 'bnl1', 'bnr1', 'bnl2', 'bnr2', 'bnx', 'bnxl', 'bnxr')]
+    R = ctx(); codeR = signup(R, 'Bina Root', f'{uR}@example.com', userid=uR)
+    check('dashboard shows Left and Right referral links', R.locator('.copybox').count() == 2 and 'leg=R' in R.inner_text('.copybox >> nth=1') and 'leg=L' in R.inner_text('.copybox >> nth=0'))
+    M = {}
+    for u, nm, ref, leg in ((uL1, 'Lata Left', codeR, 'L'), (uR1, 'Rahul Right', codeR, 'R'), (uL2, 'Lina Spill', codeR, 'L'), (uR2, 'Rohan Spill', codeR, 'R')):
+        M[u] = ctx(); code = signup(M[u], nm, f'{u}@example.com', ref=ref, userid=u, leg=leg)
+        if u == uL1: codeL1 = code
+    M[uX] = ctx(); codeX = signup(M[uX], 'Xavier Inner', f'{uX}@example.com', ref=codeL1, userid=uX, leg='R')
+    M[uXL] = ctx(); signup(M[uXL], 'Xena Left', f'{uXL}@example.com', ref=codeX, userid=uXL, leg='L')
+    M[uXR] = ctx(); signup(M[uXR], 'Xander Right', f'{uXR}@example.com', ref=codeX, userid=uXR, leg='R')
+    check('placement: first left/right go directly under sponsor', place(uL1) == (uR, 'L', uR) and place(uR1) == (uR, 'R', uR), f'{place(uL1)} {place(uR1)}')
+    check('spillover: 2nd left goes to outermost left slot', place(uL2) == (uL1, 'L', uR), str(place(uL2)))
+    check('spillover: 2nd right goes to outermost right slot', place(uR2) == (uR1, 'R', uR), str(place(uR2)))
+    check('sponsor and placement stored separately', place(uX) == (uL1, 'R', uL1) and place(uL2)[0] != place(uL2)[2])
+    ids = [uid_of(u) for u in (uR, uL1, uR1, uL2, uR2, uX, uXL, uXR)]
+    check('signup alone creates no commission and no BV', sql(f"SELECT COUNT(*) n FROM commissions WHERE beneficiary_id IN ({','.join(map(str, ids))})")[0]['n'] == 0 and legs_of(uR)['left_bv'] == 0 and legs_of(uR)['right_bv'] == 0)
+
+    # ---------- pair calc, unpaid orders, idempotency ----------
+    o1 = order(M[uL1]); check('unpaid order adds no BV', legs_of(uR)['left_bv'] == 0)
+    mark(o1); check('paid kit adds 719 BV to sponsor left leg', legs_of(uR)['left_bv'] == 719 and legs_of(uR)['total_left'] == 719, str(legs_of(uR)))
+    o2 = order(M[uR1]); check('no commission on an unpaid order', not comms('source_order_id=?', o2) and legs_of(uR)['right_bv'] == 0)
+    msg = mark(o2); c2 = comms('source_order_id=?', o2)
+    check('pair matched: 719 L + 719 R pays 10% = ₹71.90 to root', len(c2) == 1 and c2[0]['type'] == 'pair' and c2[0]['ben'].lower() == uR and c2[0]['amount_paise'] == 7190 and c2[0]['status'] == 'pending', str(c2)[:200])
+    lg = legs_of(uR); check('matched BV consumed (carry L0/R0, 1 pair)', lg['left_bv'] == 0 and lg['right_bv'] == 0 and lg['pairs_paid'] == 1, str(lg))
+    check('commission is pending, not yet withdrawable', balance(R) == 0)
+    R.goto(BASE + '/earnings'); check('earnings page shows pending pair commission', '₹71.90' in R.inner_text('#earn-by-type tr[data-type=pair]') and 'pending' in R.inner_text('#earn-rows').lower())
+    ncomm = sql('SELECT COUNT(*) n FROM commissions')[0]['n']
+    AD.goto(BASE + '/admin/commissions'); AD.click('button:has-text("Run now")'); AD.wait_for_load_state(); AD.click('button:has-text("Run now")'); AD.wait_for_load_state()
+    atok = AD.locator('input[name=_csrf]').first.input_value()
+    AD.request.post(BASE + f'/admin/orders/{o2}/status', form={'_csrf': atok, 'status': 'paid'})
+    check('idempotent: re-runs and re-marking paid create no new commission', sql('SELECT COUNT(*) n FROM commissions')[0]['n'] == ncomm and len(comms('source_order_id=?', o2)) == 1)
+    try: sql("INSERT INTO commissions(source_order_id, beneficiary_id, type, level, gross_paise, amount_paise, release_at) VALUES (?,?,'pair',0,7190,7190,datetime('now'))", o2, uid_of(uR)); dup = False
+    except RuntimeError as e: dup = 'UNIQUE' in str(e)
+    check('DB enforces UNIQUE(order, beneficiary, type, level)', dup)
+
+    # ---------- matching bonus L1 + L2 ----------
+    o3 = order(M[uL2]); mark(o3); o4 = order(M[uX]); mark(o4)
+    c4 = {(c['type'], c['ben'].lower(), c['level']): c['amount_paise'] for c in comms('source_order_id=?', o4)}
+    check('L1 matching: sponsor gets 5% of sponsored member pair income', c4 == {('pair', uL1, 0): 7190, ('matching', uR, 1): 359}, str(c4))
+    o5 = order(M[uXL]); mark(o5); o6 = order(M[uXR]); mark(o6)
+    c6 = {(c['type'], c['ben'].lower(), c['level']): c['amount_paise'] for c in comms('source_order_id=?', o6)}
+    check('L2 matching: 3% to the sponsor\'s sponsor', c6 == {('pair', uX, 0): 7190, ('matching', uL1, 1): 359, ('matching', uR, 2): 215}, str(c6))
+    check('carry-forward accumulates unmatched BV', legs_of(uR)['left_bv'] == 4 * 719 and legs_of(uR)['right_bv'] == 0, str(legs_of(uR)))
+    # repurchase
+    o7 = order(M[uL1]); mark(o7); c7 = comms('source_order_id=?', o7)
+    check('repurchase: 10% of repurchase BV to sponsor', sql('SELECT is_repurchase FROM orders WHERE id=?', o7)[0]['is_repurchase'] == 1 and any(c['type'] == 'repurchase' and c['ben'].lower() == uR and c['level'] == 1 and c['amount_paise'] == 7190 for c in c7), str(c7)[:200])
+
+    # ---------- daily cap + flush ----------
+    set_plan(daily_pair_cap=1)
+    o8 = order(M[uR2], qty=2); mark(o8); lg = legs_of(uR)
+    check('daily cap: pairs above cap are flushed (not paid, not carried)', lg['pairs_flushed'] == 2 and lg['pairs_paid'] == 1 and not [c for c in comms('source_order_id=?', o8) if c['type'] == 'pair' and c['ben'].lower() == uR] and lg['left_bv'] == 5 * 719 - 2 * 719 and lg['right_bv'] == 0, str(lg))
+    check('flush recorded per IST day', sql('SELECT SUM(pairs_flushed) n FROM pair_days WHERE user_id=?', uid_of(uR))[0]['n'] == 2)
+    set_plan(daily_pair_cap=10)
+    # ---------- hard payout cap ----------
+    set_plan(max_payout_pct=1)
+    o9 = order(M[uR1]); msg = mark(o9)
+    run9 = sql('SELECT r.* FROM commission_runs r JOIN commissions c ON c.run_id=r.id WHERE c.source_order_id=? LIMIT 1', o9)
+    tot9 = sum(c['amount_paise'] for c in comms('source_order_id=?', o9))
+    check('payout cap: run scaled down proportionally to max % of sales', run9 and run9[0]['scaled'] == 1 and tot9 <= run9[0]['cap_paise'] == 1199 and run9[0]['gross_paise'] == 14380 and 'payout cap applied' in msg, f'{run9} {tot9}')
+    AD.goto(BASE + '/admin/audit'); check('payout cap logged in audit log', 'payout cap applied' in AD.inner_text('main'))
+    set_plan(max_payout_pct=38)
+
+    # ---------- buyback request blocks release; pending -> released ----------
+    R1p = M[uR1]; R1p.goto(BASE + '/orders'); row = R1p.locator(f'tr[data-order="{o2}"]')
+    row.locator('summary').click(); row.locator('[name=unopened]').check(); row.locator('[name=reason]').fill('Changed my mind, box unopened'); row.locator('button:has-text("Submit request")').click(); R1p.wait_for_load_state()
+    check('member submits buyback request', 'Buyback request for order' in R1p.inner_text('.alert') and 'buyback pending' in R1p.inner_text(f'tr[data-order="{o2}"]').lower())
+    rtok = R1p.locator('input[name=_csrf]').first.input_value()
+    R1p.request.post(BASE + f'/orders/{o9}/buyback', form={'_csrf': rtok, 'reason': 'no unopened tick'}, max_redirects=0); R1p.goto(BASE + '/orders')
+    check('buyback requires unopened confirmation', 'unopened' in R1p.inner_text('.alert') and not sql('SELECT 1 FROM buyback_requests WHERE order_id=?', o9))
+    sql("UPDATE orders SET paid_at=datetime('now','-40 days') WHERE id=?", o5)
+    M[uXL].goto(BASE + '/orders'); xtok = M[uXL].locator('input[name=_csrf]').first.input_value()
+    check('no buyback offered after the window', M[uXL].locator(f'tr[data-order="{o5}"] summary').count() == 0)
+    M[uXL].request.post(BASE + f'/orders/{o5}/buyback', form={'_csrf': xtok, 'reason': 'too late request', 'unopened': '1'}, max_redirects=0); M[uXL].goto(BASE + '/orders')
+    check('buyback refused after window', 'within 30 days' in M[uXL].inner_text('.alert'))
+    sql("UPDATE commissions SET release_at=datetime('now','-1 minute') WHERE status='pending' AND source_order_id IN (?,?,?,?,?,?,?,?,?)", o1, o2, o3, o4, o5, o6, o7, o8, o9)
+    exp_rel = sum(c['amount_paise'] for c in comms("beneficiary_id=? AND c.status='pending' AND source_order_id<>?", uid_of(uR), o2))
+    bR = balance(R)
+    check('pending -> released after cooling-off (credited to wallet)', abs(bR - exp_rel / 100) < 0.001 and exp_rel > 0, f'{bR} vs {exp_rel}')
+    check('wallet ledger shows release reason', 'released after cooling-off' in R.inner_text('main'))
+    check('commission of order with pending buyback is held', comms('source_order_id=?', o2)[0]['status'] == 'pending')
+    R.goto(BASE + '/wallet'); check('release happens once (no double credit)', abs(balance(R) - bR) < 0.001 and sql("SELECT COUNT(*) n FROM wallet_ledger WHERE type='commission' AND user_id=?", uid_of(uR))[0]['n'] == len(comms("beneficiary_id=? AND c.status='released'", uid_of(uR))))
+
+    # ---------- buyback approval -> BV reversed + clawback ----------
+    AD.goto(BASE + '/admin/buybacks'); brow = AD.locator('#buybacks tr', has_text=f'#{o2}').first
+    brow.locator('[name=received_unopened]').evaluate("e => e.removeAttribute('required')")
+    brow.locator('[name=refund_ref]').fill('UTRBB' + run); brow.locator('button:has-text("Approve")').click(); AD.wait_for_load_state()
+    check('approve without received-unopened tick refused', 'received back unopened' in AD.inner_text('.alert'))
+    tr0 = legs_of(uR)['total_right']
+    brow = AD.locator('#buybacks tr', has_text=f'#{o2}').first
+    brow.locator('[name=received_unopened]').check(); brow.locator('[name=refund_ref]').fill('UTRBB' + run); brow.locator('button:has-text("Approve")').click(); AD.wait_for_load_state()
+    t = AD.inner_text('.alert'); check('buyback approved with 90% refund', 'approved' in t and '₹1,079.10' in t, t[:160])
+    check('buyback: order returned, BV removed, pending commission reversed', sql('SELECT status FROM orders WHERE id=?', o2)[0]['status'] == 'returned' and legs_of(uR)['total_right'] == tr0 - 719 and comms('source_order_id=?', o2)[0]['status'] == 'reversed' and abs(balance(R) - bR) < 0.001)
+    R1p.goto(BASE + '/orders'); check('member sees approved buyback + refund ref', 'UTRBB' + run in R1p.inner_text(f'tr[data-order="{o2}"]'))
+    # clawback of an already released commission (repurchase order o7)
+    L1p = M[uL1]; L1p.goto(BASE + '/orders'); row = L1p.locator(f'tr[data-order="{o7}"]')
+    row.locator('summary').click(); row.locator('[name=unopened]').check(); row.locator('[name=reason]').fill('Duplicate order, unopened'); row.locator('button:has-text("Submit request")').click(); L1p.wait_for_load_state()
+    rel7 = sum(c['amount_paise'] for c in comms("source_order_id=? AND beneficiary_id=? AND c.status='released'", o7, uid_of(uR)))
+    AD.goto(BASE + '/admin/buybacks'); brow = AD.locator('#buybacks tr', has_text=f'#{o7}').first
+    brow.locator('[name=received_unopened]').check(); brow.locator('[name=refund_ref]').fill('UTRCB' + run); brow.locator('button:has-text("Approve")').click(); AD.wait_for_load_state()
+    bR2 = balance(R)
+    check('buyback claws back released commission from wallet', rel7 == 7190 and abs(bR2 - (bR - rel7 / 100)) < 0.001 and 'reversed' in R.inner_text('main').lower(), f'{bR}->{bR2} rel7={rel7}')
+    check('all commissions of returned order reversed', all(c['status'] == 'reversed' for c in comms('source_order_id=?', o7)))
+    # reject flow
+    Xp = M[uX]; Xp.goto(BASE + '/orders'); row = Xp.locator(f'tr[data-order="{o4}"]')
+    row.locator('summary').click(); row.locator('[name=unopened]').check(); row.locator('[name=reason]').fill('Want a different product'); row.locator('button:has-text("Submit request")').click(); Xp.wait_for_load_state()
+    AD.goto(BASE + '/admin/buybacks'); brow = AD.locator('#buybacks tr', has_text=f'#{o4}').first
+    brow.locator('form:has(input[value=reject]) [name=reason]').fill('Seal broken on inspection'); brow.locator('button:has-text("Reject")').click(); AD.wait_for_load_state()
+    Xp.goto(BASE + '/orders'); check('rejected buyback shown to member, order unchanged', 'buyback rejected' in Xp.inner_text(f'tr[data-order="{o4}"]').lower() and sql('SELECT status FROM orders WHERE id=?', o4)[0]['status'] == 'paid')
+    AD.goto(BASE + '/admin/buybacks'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/25-admin-buybacks.png', full_page=True)
+    AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main'); check('buyback approvals audit-logged', 'buyback approved' in au and 'clawed back' in au and 'buyback rejected' in au)
+
+    # ---------- pages + screenshots ----------
+    R.goto(BASE + '/genealogy'); R.wait_for_load_state('networkidle'); gt = R.inner_text('main')
+    check('member genealogy shows binary tree with L/R BV', all(n in gt for n in ('Lata Left', 'Rahul Right', 'Lina Spill', 'Rohan Spill', 'Xavier Inner')) and R.locator('.tnode').count() >= 8)
+    R.screenshot(path=f'{SHOTS}/20-member-genealogy.png', full_page=True)
+    R.goto(BASE + f'/genealogy?u={uL1}'); check('member can open a downline subtree', 'Tree of' in R.inner_text('main') and 'Xena Left' in R.inner_text('main'))
+    R.goto(BASE + f'/genealogy?u={uidA}'); check('member cannot open a tree outside own team', 'not in your binary team' in R.inner_text('.alert'))
+    R.goto(BASE + '/earnings'); R.wait_for_load_state('networkidle'); et = R.inner_text('main')
+    check('earnings breakdown lists all three types', all(x in et for x in ('Pair commission', 'Matching bonus', 'Repurchase commission')))
+    R.screenshot(path=f'{SHOTS}/21-member-earnings.png', full_page=True)
+    R.goto(BASE + '/dashboard'); check('dashboard shows rank by pairs + pending', 'pairs' in R.inner_text('main').lower() and 'pending commission' in R.inner_text('main').lower())
+    AD.goto(BASE + '/admin/genealogy?u=' + ('kiran_demo' if os.environ.get('DEMO_MODE') == '1' else uR)); AD.wait_for_load_state('networkidle')
+    check('admin genealogy lookup', AD.locator('.tnode').count() >= 7)
+    AD.screenshot(path=f'{SHOTS}/23-admin-genealogy.png', full_page=True)
+    AD.goto(BASE + '/admin/commissions'); AD.wait_for_load_state('networkidle'); check('commission runs page lists runs', AD.locator('#runs tbody tr').count() >= 3)
+    AD.screenshot(path=f'{SHOTS}/26-admin-commission-runs.png', full_page=True)
+    pub.goto(BASE + '/income-plan'); pub.wait_for_load_state('networkidle'); ipt = pub.inner_text('main')
+    check('income plan: worked example + flush/forfeiture disclosure', pub.locator('#worked-example').count() == 1 and 'flush, forfeiture' in pub.inner_text('#forfeit').lower() and 'blocked accounts' in ipt.lower() and 'not carried forward' in ipt.lower() and '₹71.90' in pub.inner_text('#plan-terms'), pub.inner_text('#plan-terms')[:300] + ' || ' + pub.inner_text('#forfeit')[:200])
+    check('income disclosure computed from data' + (' (labelled demo data)' if os.environ.get('DEMO_MODE') == '1' else ''), pub.locator('#disclosure-bands tbody tr').count() == 5 and (('demo data' in pub.inner_text('#disclosure').lower()) if os.environ.get('DEMO_MODE') == '1' else True))
+    pub.screenshot(path=f'{SHOTS}/24-income-plan-binary.png', full_page=True)
+    pub.goto(BASE + '/buyback-policy'); check('buyback policy page', '30 days' in pub.inner_text('#buyback-terms') and '90%' in pub.inner_text('#buyback-terms'))
+    AD.goto(BASE + '/admin/settings'); AD.fill('[name=g_name]', f'Officer {run}'); AD.click('button:has-text("Save settings")'); AD.wait_for_load_state()
+    pub.goto(BASE + '/grievance'); check('grievance officer page shows admin-set details + 15 days', f'Officer {run}' in pub.inner_text('#grievance-officer') and '15 days' in pub.inner_text('main'))
 
     # block / activate
     X2 = ctx(); signup(X2, 'Block Test', f'block{run}@example.com')
@@ -403,7 +573,7 @@ with sync_playwright() as p:
         ver = subprocess.run(['node', '-e', 'process.stdout.write(String(require("bcryptjs").compareSync(process.argv[1], process.argv[2])))', 'HashTestPass2026', h], capture_output=True, text=True, cwd=ROOT).stdout
         check('setup-hash output verifies with bcrypt', ver == 'true', ver)
         L7 = ctx(); login(L7, 'admin', ADMIN_PW); check('setup-hash did not change admin password', L7.url.endswith('/admin'))
-    allerrs = sum([x.errs for x in (pub, A, B, C, AD, MG, V, D)], [])
+    allerrs = sum([x.errs for x in (pub, A, B, C, AD, MG, V, D, R, *M.values())], [])
     check('no JS page errors', not allerrs, str(allerrs[:3]))
     b.close()
 

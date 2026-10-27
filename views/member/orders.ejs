@@ -2,9 +2,23 @@
 <div class="page-title"><h1>My orders</h1><a class="btn btn-gold btn-sm" href="/shop">New order</a></div>
 <div class="card">
 <% if (!orders.length) { %><p class="muted">No orders yet.</p><% } else { %>
-<div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th>Product</th><th>Qty</th><th class="r">Total</th><th>Status</th></tr></thead><tbody>
-<% orders.forEach(o => { %><tr><td><%= o.id %></td><td class="small"><%= fmtDate(o.created_at) %></td><td><%= o.product_name %></td><td><%= o.qty %></td><td class="r"><%= money(o.total_paise) %><% if (cur.code !== 'INR') { %><br><span class="small muted inr-hint"><%= inrHint(o.total_paise) %></span><% } %></td><td><span class="pill <%= o.status %>"><%= o.status %></span></td></tr><% }) %>
+<div class="table-wrap"><table class="table" id="my-orders"><thead><tr><th>#</th><th>Date</th><th>Product</th><th>Qty</th><th class="r">Total</th><th class="r">BV</th><th>Status</th><th>Buyback</th></tr></thead><tbody>
+<% orders.forEach(o => { %><tr data-order="<%= o.id %>"><td><%= o.id %></td><td class="small"><%= fmtDate(o.created_at) %></td><td><%= o.product_name %></td><td><%= o.qty %></td><td class="r"><%= money(o.total_paise) %><% if (cur.code !== 'INR') { %><br><span class="small muted inr-hint"><%= inrHint(o.total_paise) %></span><% } %></td><td class="r"><%= o.bv_total %></td><td><span class="pill <%= o.status %>"><%= o.status %></span></td>
+  <td class="small">
+  <% if (o.bb_status) { %><span class="pill <%= o.bb_status==='approved'?'paid':(o.bb_status==='pending'?'pending':'cancelled') %>">buyback <%= o.bb_status %></span>
+    <% if (o.bb_status==='approved') { %><br>Refund <%= money(o.bb_refund) %> · ref <%= o.bb_ref %><% } %><% if (o.bb_status==='rejected' && o.bb_note) { %><br><%= o.bb_note %><% } %>
+  <% } else if (o.canBuyback) { %>
+    <details><summary class="link">Request buyback</summary>
+      <form method="post" action="/orders/<%= o.id %>/buyback" class="form">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <label class="check"><input type="checkbox" name="unopened" value="1" required> <span>The product is unopened and unused</span></label>
+        <label>Reason<input name="reason" required minlength="5" maxlength="500"></label>
+        <p class="muted">Refund: <%= plan.buyback_refund_pct %>% = <%= money(Math.floor(o.total_paise * plan.buyback_refund_pct / 100)) %> after approval. Window ends <%= fmtDate(o.buybackUntil) %>.</p>
+        <button class="btn btn-sm btn-outline">Submit request</button>
+      </form></details>
+  <% } else { %><span class="muted">—</span><% } %>
+  </td></tr><% }) %>
 </tbody></table></div><% } %>
-<p class="small muted">Payment instructions will be shared by EliteNexa support. Online payment (e.g. Razorpay) can be added later.</p>
+<p class="small muted">Payment instructions will be shared by EliteNexa support. Unopened products can be returned within <%= plan.buyback_days %> days of payment – see the <a href="/buyback-policy">buyback policy</a>.</p>
 </div>
 <%- include('../partials/footer') %>

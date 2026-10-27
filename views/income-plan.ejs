@@ -1,61 +1,105 @@
 <%- include('partials/header') %>
-<section class="page-hero"><div class="wrap"><h1>Income Plan</h1><p class="lead">Exactly how members earn at EliteNexa – in plain language. This page always shows the current live settings.</p></div></section>
+<%
+  const pl = plan, perPair = pl.pair_bv * pl.pair_pct; // paise (1 BV = ₹1)
+  const kitBv = kit ? Math.floor(kit.price_paise * (kit.bv_percent) / 10000) : pl.pair_bv;
+  const ex = { L: 3, R: 2 }; const exPairs = Math.min(Math.floor(ex.L * kitBv / pl.pair_bv), Math.floor(ex.R * kitBv / pl.pair_bv));
+  const exPairInc = exPairs * perPair;
+  const repBv = Math.floor(50000 * pl.default_bv_pct / 10000);
+  const fmtPct = (a) => a.map((p,i)=>'Level ' + (i+1) + ' ' + p + '%').join(' · ');
+  const sumPct = (a) => a.reduce((x,y)=>x+Number(y),0);
+%>
+<section class="page-hero"><div class="wrap"><h1>Income Plan</h1><p class="lead">The EliteNexa binary plan in plain language. Every number on this page is read live from the current plan settings.</p></div></section>
 <section class="wrap pad narrow-lg">
   <div class="card highlight">
     <h2>The one rule</h2>
-    <p><b>You earn only when a genuine product order is paid.</b> EliteNexa pays nothing for joining, signing up people, "helping", donations or any money transfers. Joining is free. Nobody needs to buy anything to join.</p>
+    <p><b>Income comes only from Business Volume (BV) of genuine, paid product orders.</b> Joining is free. EliteNexa pays nothing for joining, for signing people up, for "helping", donations or any money transfer. Nobody has to buy anything to join or to stay a member. No crypto, coins or tokens are involved.</p>
   </div>
-
   <%- include('partials/country-note') %>
-  <h2>1. Sales commission (on paid product orders)</h2>
-  <p>When a member's product order is marked <b>paid</b>, a percentage of that order's sale amount is credited to the members above them who referred them (their "upline"):</p>
-  <div class="table-wrap"><table class="table">
-    <thead><tr><th>Level</th><th>Who</th><th>Commission</th><th>On a <%= money(100000) %> sale</th></tr></thead>
-    <tbody>
-    <% settings.commission_levels.forEach((p, i) => { %>
-      <tr><td>Level <%= i+1 %></td><td><%= i===0 ? 'The member who directly referred the buyer' : 'Sponsor ' + (i+1) + ' steps above the buyer' %></td><td><b><%= p %>%</b></td><td><%= money(p * 1000) %></td></tr>
-    <% }) %>
-    </tbody>
-  </table></div>
-  <p class="muted small">Total maximum payout per sale: <%= settings.commission_levels.reduce((a,b)=>a+Number(b),0) %>% of the sale amount. Commissions are calculated on the order amount actually paid. If an order is cancelled or refunded, related commissions are reversed. Only active (non-blocked) members receive commission.</p>
 
-  <h3>Example</h3>
-  <div class="card example">
-    <p>Asha refers Ravi. Ravi refers Meena. Meena buys products worth <b><%= money(200000) %></b> and pays.</p>
+  <h2>1. Products and Business Volume (BV)</h2>
+  <p>Every product carries a BV value, a fixed share of its price (default <b><%= pl.default_bv_pct %>%</b>, 1 BV = <%= money(100) %>). BV is counted only once an order is <b>paid</b>.</p>
+  <% if (kit) { %><div class="card example"><p><b><%= kit.name %></b> – MRP <b><%= money(kit.price_paise) %></b> · BV <b><%= kitBv %></b>. Buying the kit is <b>optional</b>; it is a product package, not a joining fee.</p></div><% } %>
+
+  <h2>2. Your binary team (placement)</h2>
+  <ul>
+    <li>Every member has two sides: a <b>left leg</b> and a <b>right leg</b>. Your dashboard shows a referral link for each leg (or the new member picks the leg at sign-up).</li>
+    <li>If that spot under you is taken, the new member is placed automatically at the <b>outermost free spot</b> of that leg (spillover). Your <b>sponsor</b> (who invited you) and your <b>placement</b> (where you sit in the tree) are stored separately.</li>
+    <li>Placing someone in a leg earns nothing by itself. Only paid product BV moves through the tree.</li>
+  </ul>
+
+  <h2>3. Pair (binary) commission</h2>
+  <div class="table-wrap"><table class="table plan-table" id="plan-terms"><tbody>
+    <tr><th>One pair</th><td><b><%= pl.pair_bv %> BV</b> on your left leg matched with <b><%= pl.pair_bv %> BV</b> on your right leg</td></tr>
+    <tr><th>Pair commission</th><td><b><%= pl.pair_pct %>%</b> of the pair BV = <b><%= money(perPair) %></b> per pair</td></tr>
+    <tr><th>Daily cap</th><td><b><%= pl.daily_pair_cap %> pairs per member per day</b> (India time). Pairs above the cap are <b>flushed</b>: their BV is used up and pays nothing.</td></tr>
+    <tr><th>Carry-forward</th><td>BV that has not been matched yet is carried forward on that leg with no time limit while your account is active.</td></tr>
+  </tbody></table></div>
+
+  <h2>4. Matching bonus</h2>
+  <p>On top of their own pairs, a member earns a matching bonus on the <b>pair commission</b> earned by members they <b>personally sponsored</b>: <b><%= fmtPct(pl.matching_pcts) %></b>. This is paid from that pair income's BV, never for the sign-up itself.</p>
+
+  <h2>5. Repurchase commission</h2>
+  <p>Any paid order after a member's first paid order is a <b>repurchase</b>. Its BV goes into the binary tree like every order and, in addition, <b><%= sumPct(pl.repurchase_pcts) %>%</b> of the repurchase BV is paid up the sponsor line: <b><%= fmtPct(pl.repurchase_pcts) %></b>.</p>
+
+  <h2>6. Ranks (recognition only)</h2>
+  <p>Ranks are based on the total pairs matched in your tree (including flushed pairs). They are titles; they pay no extra money and never need a purchase.</p>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Rank</th><th>Total pairs</th></tr></thead><tbody>
+    <% pl.ranks.forEach(r => { %><tr><td><b><%= r.name %></b></td><td><%= r.pairs %></td></tr><% }) %></tbody></table></div>
+
+  <h2>7. Worked example</h2>
+  <div class="card example" id="worked-example">
+    <p>Asha sponsors Kiran. Kiran sponsors and places 3 customers on the left and 2 on the right; each buys one <%= kit ? kit.name : 'product' %> (<%= kitBv %> BV) and pays.</p>
     <ul>
-      <li>Ravi (Level 1 for Meena) earns <%= settings.commission_levels[0] || 0 %>% = <b><%= money((settings.commission_levels[0]||0) * 2000) %></b></li>
-      <% if (settings.commission_levels.length > 1) { %><li>Asha (Level 2 for Meena) earns <%= settings.commission_levels[1] %>% = <b><%= money(settings.commission_levels[1] * 2000) %></b></li><% } %>
-      <li>If Meena had only signed up and bought nothing, <b>nobody would earn anything.</b></li>
+      <li>Kiran's legs: left <%= ex.L * kitBv %> BV, right <%= ex.R * kitBv %> BV → <b><%= exPairs %> pairs</b> × <%= money(perPair) %> = <b><%= money(exPairInc) %></b> pair commission.</li>
+      <li>Carry-forward: left <%= ex.L * kitBv - exPairs * pl.pair_bv %> BV, right <%= ex.R * kitBv - exPairs * pl.pair_bv %> BV.</li>
+      <li>Asha (Kiran's sponsor) gets a level-1 matching bonus of <%= pl.matching_pcts[0] || 0 %>% = <b><%= money(Math.floor(exPairInc * (pl.matching_pcts[0]||0) / 100)) %></b><% if (pl.matching_pcts[1]) { %>; Asha's sponsor gets <%= pl.matching_pcts[1] %>% = <b><%= money(Math.floor(exPairInc * pl.matching_pcts[1] / 100)) %></b><% } %>.</li>
+      <li>A later <%= money(50000) %> repurchase (<%= repBv %> BV) by one of the customers pays Kiran <%= pl.repurchase_pcts[0] || 0 %>% = <b><%= money(repBv * (pl.repurchase_pcts[0]||0)) %></b> repurchase commission (and adds its BV to the tree).</li>
+      <li>If 15 pairs matched for one member on a single day, <%= pl.daily_pair_cap %> would be paid and <%= Math.max(0, 15 - pl.daily_pair_cap) %> flushed.</li>
+      <li>If the 5 customers had only signed up and bought nothing, <b>nobody would earn anything.</b></li>
     </ul>
   </div>
 
-  <h2>2. Ranks (recognition based on sales volume)</h2>
-  <p>Your rank is based on the value of paid product orders – your own personal purchases plus your team's purchases (up to <%= settings.team_depth %> levels deep). Ranks never require buying a package or paying a fee.</p>
-  <div class="table-wrap"><table class="table">
-    <thead><tr><th>Rank</th><th>Personal sales volume</th><th>Team sales volume</th></tr></thead>
-    <tbody><% settings.ranks.forEach(r => { %><tr><td><b><%= r.name %></b></td><td><%= money(r.personal*100) %></td><td><%= money(r.team*100) %></td></tr><% }) %></tbody>
-  </table></div>
-
-  <h2>3. Your wallet &amp; withdrawals</h2>
+  <h2 id="payout">8. When commissions are paid</h2>
   <ul>
-    <li>Your wallet is an earnings ledger. Every credit and debit is listed with its reason and date.</li>
-    <li>You can request a withdrawal of your available balance (minimum <%= money(settings.min_withdrawal_rupees*100) %>) to your own bank account, UPI ID or PayPal account. Requests are reviewed by EliteNexa and paid out externally.</li>
-    <li>Money cannot be transferred between members. The wallet cannot be "topped up" and is not a payment instrument.</li>
-    <li>Applicable taxes (e.g. TDS under the Income Tax Act) may be deducted as required by law. KYC (PAN, address proof) may be required before payout.</li>
+    <li>Commissions are calculated only for <b>paid</b> orders, as <b>pending</b>, and move to your withdrawable wallet after <b><%= pl.cooling_off_days %> days</b> (cooling-off / buyback window).</li>
+    <li><b>Payout cap:</b> total commissions of any calculation run can never exceed <b><%= pl.max_payout_pct %>%</b> of that run's sales. If they would, all commissions of that run are reduced proportionally; this is logged.</li>
+    <li>If an order is returned under the <a href="/buyback-policy">buyback policy</a> or cancelled, its BV is removed from the tree and every commission from it is reversed (pending ones are cancelled, released ones are debited from the wallet). A leg can therefore temporarily show negative carry-forward BV.</li>
+    <li>Withdrawals: minimum <%= money(settings.min_withdrawal_rupees*100) %>, to your own bank, UPI or PayPal account, after review. Money cannot be transferred between members. TDS and KYC rules apply.</li>
   </ul>
 
-  <h2 id="consumer">4. Your rights as a customer and direct seller</h2>
+  <h2 id="forfeit">9. Flush, forfeiture &amp; carry-forward – full disclosure</h2>
   <ul>
-    <li>EliteNexa follows the <b>Consumer Protection (Direct Selling) Rules, 2021</b>. We do not operate any pyramid scheme or money-circulation scheme, and we do not charge any entry or registration fee.</li>
-    <li>No member is required to purchase any product or maintain any stock to join or remain a member.</li>
-    <li>Products can be returned or exchanged as per our return policy; unsold products bought by a member can be returned as required under the Rules.</li>
-    <li>For any complaint, contact our grievance officer via the <a href="/contact">Contact page</a>. We acknowledge complaints within 48 hours and aim to resolve them within one month.</li>
-    <li>You may leave at any time. Any confirmed balance remains payable as per this plan.</li>
+    <li><b>Daily-cap flush:</b> pairs above <%= pl.daily_pair_cap %> per day are not paid and not carried forward.</li>
+    <li><b>Blocked accounts:</b> while an account is blocked, its matched pairs are flushed and it receives no commission of any type.</li>
+    <li><b>No minimum threshold:</b> there is no minimum-sales or "active" requirement to receive commission, and carry-forward BV does not expire.</li>
+    <li><b>Wallet:</b> amounts below the minimum withdrawal stay in your wallet; they are never forfeited.</li>
   </ul>
+
+  <h2 id="consumer">10. Your rights</h2>
+  <ul>
+    <li>EliteNexa follows India's <b>Consumer Protection (Direct Selling) Rules, 2021</b>: no entry fee, no pyramid or money-circulation scheme, no obligation to buy or hold stock.</li>
+    <li><a href="/buyback-policy">Buyback &amp; cooling-off</a>: unopened products can be returned within <%= pl.buyback_days %> days for a <%= pl.buyback_refund_pct %>% refund.</li>
+    <li>Complaints: our <a href="/grievance">Grievance Officer</a> resolves complaints within 15 days.</li>
+  </ul>
+
+  <div id="disclosure" class="card">
+    <h2>Income disclosure<% if (DEMO_MODE) { %> <span class="pill pending">demo data</span><% } %></h2>
+    <p class="small muted">Computed live from <%= DEMO_MODE ? 'the DEMO data on this server (not real members)' : 'all EliteNexa member accounts' %><%= disclosure.since ? ' since ' + fmtDate(disclosure.since) : '' %>. Includes pending and released commissions, excludes reversed ones.</p>
+    <div class="stats">
+      <div class="stat"><small>Members</small><b><%= disclosure.members %></b></div>
+      <div class="stat"><small>Earned anything</small><b><%= disclosure.earnersPct.toFixed(1) %>%</b></div>
+      <div class="stat"><small>Median earnings</small><b><%= money(disclosure.median) %></b></div>
+      <div class="stat"><small>Average earnings</small><b><%= money(disclosure.average) %></b></div>
+    </div>
+    <div class="table-wrap"><table class="table" id="disclosure-bands"><thead><tr><th>Total earned</th><th class="r">Members</th><th class="r">% of members</th><th class="r">Average in band</th></tr></thead><tbody>
+    <% disclosure.bands.forEach(b => { %><tr><td><%= b.label %></td><td class="r"><%= b.count %></td><td class="r"><%= b.pct.toFixed(1) %>%</td><td class="r"><%= money(b.avg) %></td></tr><% }) %>
+    </tbody></table></div>
+    <p class="small muted">Top 1% (<%= disclosure.topN %> member<%= disclosure.topN===1?'':'s' %>) average: <%= money(disclosure.top1avg) %> · Highest: <%= money(disclosure.max) %>. Band labels are in INR.</p>
+  </div>
 
   <div id="disclaimer" class="card warn">
     <h2>Income disclaimer</h2>
-    <p>EliteNexa does <b>not</b> guarantee any income. The figures on this page explain how commissions are calculated; they are <b>not</b> a promise or estimate of what you will earn. Results vary widely and depend on your own effort, skills, time invested and real customer demand for products. Many members earn little or nothing and simply enjoy the products as customers. Do not join expecting fixed, passive or "doubling" income, and never borrow money to buy products.</p>
+    <p>EliteNexa does <b>not</b> guarantee any income. The figures above explain how commissions are calculated; they are <b>not</b> a promise or estimate of what you will earn. Most members earn little or nothing and buy products as customers. Do not join expecting fixed, passive or "doubling" income, and never borrow money to buy products.</p>
   </div>
   <p class="center"><a class="btn btn-gold btn-lg" href="/signup">Join free</a></p>
 </section>

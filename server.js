@@ -9,6 +9,8 @@ const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const D = require('./db');
 const CUR = require('./currency');
+const P = require('./plan');
+if (process.env.DEMO_MODE === '1') require('./demo').seedDemo();
 const { db } = D;
 
 const PORT = Number(process.env.PORT) || 3100;
@@ -95,6 +97,7 @@ app.use((req, res, next) => {
   res.locals.money = CUR.formatter(cur);                                   // INR paise -> visitor's currency
   res.locals.inrHint = (paise) => cur.code === 'INR' ? '' : `≈ ${inr(paise)}`; // small "≈ ₹X" hint
   res.locals.fmtCur = (amount, code) => CUR.fmt(Number(amount || 0), CUR.getCurrency(code) || CUR.getCurrency('INR'));
+  res.locals.plan = P.getPlan(); res.locals.TYPE_LABEL = P.TYPE_LABEL;
   res.locals.inr = inr; res.locals.fmtDate = fmtDate; res.locals.path = req.path; res.locals.BRAND = BRAND;
   res.locals.baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
   next();
@@ -132,7 +135,10 @@ app.get('/products', (req, res) => {
   const products = db.prepare('SELECT * FROM products WHERE active=1 ORDER BY id').all();
   res.render('products', { title: 'Products', products });
 });
-app.get('/income-plan', (req, res) => res.render('income-plan', { title: 'Income Plan', settings: D.getSettings() }));
+const starterKit = () => db.prepare("SELECT * FROM products WHERE name='EliteNexa Starter Kit'").get() || null;
+app.get('/income-plan', (req, res) => res.render('income-plan', { title: 'Income Plan', settings: D.getSettings(), kit: starterKit(), disclosure: P.incomeDisclosure() }));
+app.get('/buyback-policy', (req, res) => res.render('buyback-policy', { title: 'Buyback & Cooling-off Policy' }));
+app.get('/grievance', (req, res) => res.render('grievance', { title: 'Grievance Officer', g: D.getSettings().grievance }));
 app.get('/about', (req, res) => res.render('about', { title: 'About' }));
 app.get('/contact', (req, res) => res.render('contact', { title: 'Contact', form: {} }));
 app.post('/contact', (req, res) => {
@@ -150,7 +156,8 @@ app.get('/signup', (req, res) => {
   if (req.user) return res.redirect(isStaff(req.user) ? '/admin' : '/dashboard');
   const ref = clean(req.query.ref, 20);
   const sponsor = ref ? findSponsor(ref) : null;
-  res.render('signup', { title: 'Join free', form: { ref }, sponsor });
+  const leg = req.query.leg === 'R' ? 'R' : 'L';
+  res.render('signup', { title: 'Join free', form: { ref, leg }, sponsor });
 });
 // Country / currency selector (header + anywhere). Visitors: cookie. Members: also saved to their profile.
 app.post('/country', (req, res) => {
@@ -164,7 +171,7 @@ app.post('/country', (req, res) => {
   res.redirect(safeBack);
 });
 app.post('/signup', (req, res) => {
-  const form = { name: clean(req.body.name, 100), userid: clean(req.body.userid, 40), email: clean(req.body.email, 200).toLowerCase(), phone: clean(req.body.phone, 20), ref: clean(req.body.ref, 20), country: clean(req.body.country, 60) || req.country };
+  const form = { name: clean(req.body.name, 100), userid: clean(req.body.userid, 40), email: clean(req.body.email, 200).toLowerCase(), phone: clean(req.body.phone, 20), ref: clean(req.body.ref, 20), country: clean(req.body.country, 60) || req.country, leg: req.body.leg === 'R' ? 'R' : 'L' };
   const pw = String(req.body.password || ''), pw2 = String(req.body.password2 || '');
   const errs = [];
   if (form.name.length < 2) errs.push('Please enter your full name.');
@@ -183,9 +190,16 @@ app.post('/signup', (req, res) => {
   if (db.prepare('SELECT 1 FROM users WHERE lower(email)=?').get(form.email)) errs.push('An account with this email already exists. Please log in.');
   if (errs.length) return res.status(400).render('signup', { title: 'Join free', form, sponsor, error: errs.join(' ') });
   let info;
+  const hash = bcrypt.hashSync(pw, 12);
   try {
-    info = db.prepare('INSERT INTO users(name,username,email,phone,country,password_hash,referral_code,sponsor_id) VALUES (?,?,?,?,?,?,?,?)')
-      .run(form.name, form.userid, form.email, form.phone || null, form.country, bcrypt.hashSync(pw, 12), D.newReferralCode(), sponsor ? sponsor.id : null);
+    // signup + binary placement in one transaction (placement = outermost free slot of the chosen leg under the sponsor).
+    // Joining is free and creates NO commission and NO BV for anyone.
+    info = db.transaction(() => {
+      const r = db.prepare('INSERT INTO users(name,username,email,phone,country,password_hash,referral_code,sponsor_id) VALUES (?,?,?,?,?,?,?,?)')
+        .run(form.name, form.userid, form.email, form.phone || null, form.country, hash, D.newReferralCode(), sponsor ? sponsor.id : null);
+      if (sponsor) P.placeMember(r.lastInsertRowid, sponsor.id, form.leg);
+      return r;
+    })();
   } catch (e) {
     if (String(e.code).startsWith('SQLITE_CONSTRAINT')) return res.status(400).render('signup', { title: 'Join free', form, sponsor, error: 'This User ID or email was just taken. Please choose another.' });
     throw e;
@@ -222,13 +236,17 @@ app.post('/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
 
 // ---------- member ----------
 const m = express.Router();
-const MEMBER_PREFIXES = ['/dashboard', '/profile', '/shop', '/orders', '/team', '/wallet'];
+const MEMBER_PREFIXES = ['/dashboard', '/profile', '/shop', '/orders', '/team', '/wallet', '/genealogy', '/earnings'];
 m.use((req, res, next) => MEMBER_PREFIXES.some(p => req.path === p || req.path.startsWith(p + '/')) ? requireMember(req, res, next) : next());
+// matured commissions (cooling-off over) are moved to the withdrawable wallet whenever a member page is opened
+m.use((req, res, next) => { if (req.user && req.user.role === 'member') P.releaseMatured(); next(); });
 function memberSummary(u) {
-  const s = D.getSettings();
-  const rank = D.rankFor(u.id, s);
+  const s = D.getSettings(); const plan = P.getPlan();
+  const legs = P.legs(u.id);
+  const rank = P.rankOf(legs.pairs_total, plan);
   const team = D.downline(u.id, s.team_depth);
-  return { s, rank, team, bal: D.balance(u.id) };
+  rank.pv = D.personalVolume(u.id) / 100; rank.tv = team.reduce((a, t) => a + t.volume, 0) / 100;
+  return { s, plan, legs, rank, team, bal: D.balance(u.id), pending: P.pendingTotal(u.id), counts: P.tree(u.id, 0).counts };
 }
 m.get('/dashboard', (req, res) => {
   const sum = memberSummary(req.user);
@@ -278,16 +296,52 @@ m.post('/orders', (req, res) => {
       if (!p) throw new Error('Product not found.');
       if (p.stock < qty) throw new Error(`Only ${p.stock} in stock.`);
       db.prepare('UPDATE products SET stock=stock-? WHERE id=?').run(qty, pid);
-      return db.prepare('INSERT INTO orders(user_id,product_id,product_name,unit_price_paise,qty,total_paise,address) VALUES (?,?,?,?,?,?,?)')
-        .run(req.user.id, pid, p.name, p.price_paise, qty, p.price_paise * qty, address).lastInsertRowid;
+      return db.prepare('INSERT INTO orders(user_id,product_id,product_name,unit_price_paise,qty,total_paise,address,bv_total) VALUES (?,?,?,?,?,?,?,?)')
+        .run(req.user.id, pid, p.name, p.price_paise, qty, p.price_paise * qty, address, P.bvPerUnit(p.price_paise, p.bv_percent) * qty).lastInsertRowid;
     })();
     flash(req, 'ok', `Order #${id} placed. Status is Pending until payment is confirmed by EliteNexa.`);
     res.redirect('/orders');
   } catch (e) { flash(req, 'err', e.message); res.redirect('/shop'); }
 });
+function buybackEligible(o, plan) {
+  if (!['paid', 'delivered'].includes(o.status) || !o.paid_at || o.bb_status) return false;
+  return Date.now() <= P.addDays(P.parseSql(o.paid_at), plan.buyback_days).getTime();
+}
 m.get('/orders', (req, res) => {
-  const orders = db.prepare('SELECT * FROM orders WHERE user_id=? ORDER BY id DESC').all(req.user.id);
+  const plan = P.getPlan();
+  const orders = db.prepare('SELECT o.*, b.status AS bb_status, b.refund_paise AS bb_refund, b.admin_note AS bb_note, b.refund_ref AS bb_ref FROM orders o LEFT JOIN buyback_requests b ON b.order_id=o.id WHERE o.user_id=? ORDER BY o.id DESC').all(req.user.id);
+  orders.forEach(o => { o.canBuyback = buybackEligible(o, plan); o.buybackUntil = o.paid_at ? P.sqlTime(P.addDays(P.parseSql(o.paid_at), plan.buyback_days)) : null; });
   res.render('member/orders', { title: 'My orders', orders });
+});
+m.post('/orders/:id/buyback', (req, res) => {
+  const plan = P.getPlan(); const reason = clean(req.body.reason, 500);
+  const o = db.prepare('SELECT o.*, b.status AS bb_status FROM orders o LEFT JOIN buyback_requests b ON b.order_id=o.id WHERE o.id=? AND o.user_id=?').get(Number(req.params.id), req.user.id);
+  if (!o) { flash(req, 'err', 'Order not found.'); return res.redirect('/orders'); }
+  if (!buybackEligible(o, plan)) { flash(req, 'err', `Buyback is possible only for paid orders within ${plan.buyback_days} days of payment, once per order.`); return res.redirect('/orders'); }
+  if (!req.body.unopened) { flash(req, 'err', 'Buyback applies to unopened, unused products. Please confirm the product is unopened.'); return res.redirect('/orders'); }
+  if (reason.length < 5) { flash(req, 'err', 'Please tell us briefly why you are returning the product.'); return res.redirect('/orders'); }
+  try {
+    db.prepare('INSERT INTO buyback_requests(order_id, user_id, reason, unopened) VALUES (?,?,?,1)').run(o.id, req.user.id, reason);
+    flash(req, 'ok', `Buyback request for order #${o.id} submitted. EliteNexa will contact you for the product return; after approval ${plan.buyback_refund_pct}% of the order value is refunded.`);
+  } catch (e) { flash(req, 'err', 'A buyback request for this order already exists.'); }
+  res.redirect('/orders');
+});
+m.get('/genealogy', (req, res) => {
+  let root = req.user.id;
+  const q = clean(req.query.u, 40);
+  if (q) {
+    const t = db.prepare("SELECT id FROM users WHERE lower(username)=lower(?) AND role='member'").get(q);
+    if (t && P.isInDownline(req.user.id, t.id)) root = t.id;
+    else { flash(req, 'err', 'That member is not in your binary team.'); return res.redirect('/genealogy'); }
+  }
+  const rootUser = db.prepare('SELECT id, username, placement_parent_id FROM users WHERE id=?').get(root);
+  const up = root !== req.user.id && rootUser.placement_parent_id ? db.prepare('SELECT username FROM users WHERE id=?').get(rootUser.placement_parent_id) : null;
+  res.render('member/genealogy', { title: 'Genealogy', ...memberSummary(req.user), t: P.tree(root, 3), base: '/genealogy', up: up && up.username, isSelf: root === req.user.id });
+});
+m.get('/earnings', (req, res) => {
+  const rows = db.prepare(`SELECT c.*, f.username AS from_uid FROM commissions c LEFT JOIN users f ON f.id=c.from_user_id WHERE c.beneficiary_id=? ORDER BY c.id DESC LIMIT 300`).all(req.user.id);
+  const days = db.prepare('SELECT * FROM pair_days WHERE user_id=? ORDER BY day DESC LIMIT 30').all(req.user.id);
+  res.render('member/earnings', { title: 'My earnings', ...memberSummary(req.user), e: P.earnings(req.user.id), rows, days });
 });
 m.get('/team', (req, res) => {
   const sum = memberSummary(req.user);
@@ -347,6 +401,7 @@ a.use((req, res, next) => {
 });
 a.use((req, res, next) => { res.locals.money = inr; res.locals.inrHint = () => ''; next(); }); // staff area: base currency (INR)
 a.get('/', (req, res) => {
+  P.releaseMatured();
   const q = (sql, ...p) => db.prepare(sql).get(...p);
   const stats = {
     members: q("SELECT COUNT(*) n FROM users WHERE role='member'").n,
@@ -354,6 +409,9 @@ a.get('/', (req, res) => {
     pendingOrders: q("SELECT COUNT(*) n FROM orders WHERE status='pending'").n,
     sales: q("SELECT COALESCE(SUM(total_paise),0) v FROM orders WHERE status IN ('paid','delivered')").v,
     commissions: q("SELECT COALESCE(SUM(amount_paise),0) v FROM wallet_ledger WHERE type IN ('commission','commission_reversal')").v,
+    pendingComm: q("SELECT COALESCE(SUM(amount_paise),0) v FROM commissions WHERE status='pending'").v,
+    payoutPct: (() => { const s = q("SELECT COALESCE(SUM(total_paise),0) v FROM orders WHERE status IN ('paid','delivered')").v; const c = q("SELECT COALESCE(SUM(amount_paise),0) v FROM commissions WHERE status<>'reversed'").v; return s ? c * 100 / s : 0; })(),
+    pendingBuybacks: q("SELECT COUNT(*) n FROM buyback_requests WHERE status='pending'").n,
     liability: q("SELECT COALESCE(SUM(amount_paise),0) v FROM wallet_ledger").v,
     pendingWd: q("SELECT COUNT(*) n, COALESCE(SUM(amount_paise),0) v FROM withdrawals WHERE status='pending'"),
     paidOut: q("SELECT COALESCE(SUM(amount_paise),0) v FROM withdrawals WHERE status='approved'").v,
@@ -382,7 +440,7 @@ a.post('/members/:id/status', (req, res) => {
 });
 
 a.get('/products', (req, res) => res.render('admin/products', { title: 'Products', products: db.prepare('SELECT * FROM products ORDER BY id').all() }));
-a.get('/products/new', (req, res) => res.render('admin/product-form', { title: 'New product', p: { active: 1, stock: 0 } }));
+a.get('/products/new', (req, res) => res.render('admin/product-form', { title: 'New product', p: { active: 1, stock: 0, bv_percent: P.getPlan().default_bv_pct } }));
 a.get('/products/:id/edit', (req, res) => {
   const p = db.prepare('SELECT * FROM products WHERE id=?').get(Number(req.params.id));
   if (!p) return res.redirect('/admin/products');
@@ -391,16 +449,18 @@ a.get('/products/:id/edit', (req, res) => {
 a.post('/products/save', (req, res) => {
   const id = req.body.id ? Number(req.body.id) : null;
   const p = { id, name: clean(req.body.name, 150), price_paise: toPaise(req.body.price), image_url: clean(req.body.image_url, 500),
-    description: clean(req.body.description, 3000), stock: Number(req.body.stock), active: req.body.active ? 1 : 0 };
+    description: clean(req.body.description, 3000), stock: Number(req.body.stock), active: req.body.active ? 1 : 0,
+    bv_percent: req.body.bv_percent === undefined || req.body.bv_percent === '' ? P.getPlan().default_bv_pct : Number(req.body.bv_percent) };
   const errs = [];
   if (p.name.length < 2) errs.push('Name is required.');
   if (!Number.isInteger(p.price_paise) || p.price_paise < 0) errs.push('Enter a valid price.');
   if (!Number.isInteger(p.stock) || p.stock < 0) errs.push('Stock must be a whole number ≥ 0.');
+  if (!Number.isFinite(p.bv_percent) || p.bv_percent < 0 || p.bv_percent > 100) errs.push('BV must be 0–100% of the price.');
   if (p.image_url && !/^(https?:\/\/|\/)[^\s"'<>]+$/.test(p.image_url)) errs.push('Image URL must start with https:// or /');
   if (errs.length) return res.status(400).render('admin/product-form', { title: id ? 'Edit product' : 'New product', p, error: errs.join(' ') });
-  if (id) db.prepare('UPDATE products SET name=?, price_paise=?, image_url=?, description=?, stock=?, active=? WHERE id=?').run(p.name, p.price_paise, p.image_url, p.description, p.stock, p.active, id);
-  else p.id = db.prepare('INSERT INTO products(name, price_paise, image_url, description, stock, active) VALUES (?,?,?,?,?,?)').run(p.name, p.price_paise, p.image_url, p.description, p.stock, p.active).lastInsertRowid;
-  D.audit(req.user.id, id ? 'product_updated' : 'product_created', null, { product_id: p.id, name: p.name, price: p.price_paise / 100, stock: p.stock, active: p.active });
+  if (id) db.prepare('UPDATE products SET name=?, price_paise=?, image_url=?, description=?, stock=?, active=?, bv_percent=? WHERE id=?').run(p.name, p.price_paise, p.image_url, p.description, p.stock, p.active, p.bv_percent, id);
+  else p.id = db.prepare('INSERT INTO products(name, price_paise, image_url, description, stock, active, bv_percent) VALUES (?,?,?,?,?,?,?)').run(p.name, p.price_paise, p.image_url, p.description, p.stock, p.active, p.bv_percent).lastInsertRowid;
+  D.audit(req.user.id, id ? 'product_updated' : 'product_created', null, { product_id: p.id, name: p.name, price: p.price_paise / 100, stock: p.stock, active: p.active, bv_percent: p.bv_percent, bv_per_unit: P.bvPerUnit(p.price_paise, p.bv_percent) });
   flash(req, 'ok', 'Product saved.'); res.redirect('/admin/products');
 });
 a.post('/products/:id/delete', (req, res) => {
@@ -413,11 +473,11 @@ a.post('/products/:id/delete', (req, res) => {
 });
 
 a.get('/orders', (req, res) => {
-  const status = ['pending', 'paid', 'delivered', 'cancelled'].includes(req.query.status) ? req.query.status : '';
+  const status = ['pending', 'paid', 'delivered', 'cancelled', 'returned'].includes(req.query.status) ? req.query.status : '';
   const orders = db.prepare(`SELECT o.*, u.name AS member, u.email, u.phone FROM orders o JOIN users u ON u.id=o.user_id WHERE (?='' OR o.status=?) ORDER BY o.id DESC`).all(status, status);
   res.render('admin/orders', { title: 'Orders', orders, status });
 });
-const TRANSITIONS = { pending: ['paid', 'cancelled'], paid: ['delivered', 'cancelled'], delivered: [], cancelled: [] };
+const TRANSITIONS = { pending: ['paid', 'cancelled'], paid: ['delivered', 'cancelled'], delivered: [], cancelled: [], returned: [] };
 a.post('/orders/:id/status', (req, res) => {
   const id = Number(req.params.id), to = String(req.body.status || '');
   try {
@@ -429,12 +489,13 @@ a.post('/orders/:id/status', (req, res) => {
       db.prepare("UPDATE orders SET status=?, updated_at=datetime('now'), paid_at=CASE WHEN ?='paid' THEN datetime('now') ELSE paid_at END WHERE id=?").run(to, to, id);
       let extra = '';
       if (to === 'paid') {
-        const c = D.creditCommissions(id);
-        extra = c.length ? ` Commission credited to ${c.length} upline member(s): ${c.map(x => `L${x.gen} ${inr(x.amt)}`).join(', ')}.` : ' No upline commission (no eligible sponsors).';
+        // commission run for this order: BV up the binary tree, pairs, matching, repurchase, payout cap -> PENDING
+        const r = P.runCommissions({ trigger: 'order_paid', byUser: req.user.id, orderIds: [id] });
+        extra = ` ${o.bv_total} BV added to the binary tree (run #${r.runId}). ${r.rows ? `${r.rows} commission entr${r.rows === 1 ? 'y' : 'ies'} totalling ${inr(r.paid)} recorded as pending (cooling-off ${P.getPlan().cooling_off_days} days)` : 'No commission from this order yet'}${r.scale < 1 ? ` – payout cap applied (×${r.scale.toFixed(4)})` : ''}.`;
       }
       if (to === 'cancelled') {
         db.prepare('UPDATE products SET stock=stock+? WHERE id=?').run(o.qty, o.product_id);
-        if (o.commission_paid) { const n = D.reverseCommissions(id, req.user.id); extra = ` ${n} commission entr${n === 1 ? 'y' : 'ies'} reversed.`; }
+        if (o.bv_processed) { const r = P.reverseOrder(id, req.user.id, 'was cancelled'); extra = ` BV removed from the tree; ${r.reversedPending + r.reversedReleased} commission entr${r.reversedPending + r.reversedReleased === 1 ? 'y' : 'ies'} (${inr(r.amount)}) reversed.`; }
       }
       D.audit(req.user.id, 'order_' + to, o.user_id, `Order #${id} ${o.status} → ${to} by ${req.user.role} ${req.user.username}.${extra}`);
       return `Order #${id} marked ${to}.${extra}`;
@@ -500,22 +561,102 @@ a.post('/withdrawals/:id', (req, res) => {
 
 a.get('/settings', (req, res) => res.render('admin/settings', { title: 'Settings', s: D.getSettings() }));
 a.post('/settings', (req, res) => {
-  const lv = String(req.body.commission_levels || '').split(',').map(x => x.trim()).filter(Boolean).map(Number);
   const depth = Number(req.body.team_depth), minW = Number(req.body.min_withdrawal_rupees);
-  const names = [].concat(req.body.rank_name || []), pers = [].concat(req.body.rank_personal || []), team = [].concat(req.body.rank_team || []);
-  const ranks = names.map((n, i) => ({ name: clean(n, 30), personal: Number(pers[i]), team: Number(team[i]) })).filter(r => r.name);
+  const g = { name: clean(req.body.g_name, 120), email: clean(req.body.g_email, 200), phone: clean(req.body.g_phone, 30), address: clean(req.body.g_address, 300) };
   const errs = [];
-  if (!lv.length || lv.length > 10 || lv.some(x => !Number.isFinite(x) || x < 0 || x > 50)) errs.push('Commission levels must be 1–10 comma-separated percentages between 0 and 50.');
-  if (lv.reduce((s, x) => s + x, 0) > 60) errs.push('Total commission across all levels cannot exceed 60% of the sale price.');
   if (!Number.isInteger(depth) || depth < 1 || depth > 20) errs.push('Team depth must be 1–20.');
   if (!Number.isFinite(minW) || minW < 0) errs.push('Minimum withdrawal must be ≥ 0.');
-  if (!ranks.length || ranks.some(r => !Number.isFinite(r.personal) || !Number.isFinite(r.team) || r.personal < 0 || r.team < 0)) errs.push('Each rank needs a name and non-negative targets.');
+  if (g.name.length < 3 || !EMAIL_RE.test(g.email) || g.phone.length < 6) errs.push('Grievance Officer needs a name, a valid email and a phone number.');
   if (errs.length) { flash(req, 'err', errs.join(' ')); return res.redirect('/admin/settings'); }
   const before = D.getSettings();
-  D.saveSetting('commission_levels', lv); D.saveSetting('team_depth', depth); D.saveSetting('min_withdrawal_rupees', minW); D.saveSetting('ranks', ranks);
-  D.audit(req.user.id, 'settings_updated', null, { before: { commission_levels: before.commission_levels, team_depth: before.team_depth, min_withdrawal_rupees: before.min_withdrawal_rupees, ranks: before.ranks }, after: { commission_levels: lv, team_depth: depth, min_withdrawal_rupees: minW, ranks } });
-  flash(req, 'ok', 'Settings saved. The public Income Plan page now shows the new values.');
+  D.saveSetting('team_depth', depth); D.saveSetting('min_withdrawal_rupees', minW); D.saveSetting('grievance', g);
+  D.audit(req.user.id, 'settings_updated', null, { before: { team_depth: before.team_depth, min_withdrawal_rupees: before.min_withdrawal_rupees, grievance: before.grievance }, after: { team_depth: depth, min_withdrawal_rupees: minW, grievance: g } });
+  flash(req, 'ok', 'Settings saved.');
   res.redirect('/admin/settings');
+});
+// ---------- Binary plan settings (admin only; managers get 403 from the guard) ----------
+const pctList = (v) => String(v || '').split(',').map(x => x.trim()).filter(Boolean).map(Number);
+a.get('/plan', (req, res) => res.render('admin/plan', { title: 'Plan settings', p: P.getPlan(), defaults: P.DEFAULT_PLAN }));
+a.post('/plan', (req, res) => {
+  const names = [].concat(req.body.rank_name || []), pairs = [].concat(req.body.rank_pairs || []);
+  const p = {
+    pair_bv: Number(req.body.pair_bv), pair_pct: Number(req.body.pair_pct), daily_pair_cap: Number(req.body.daily_pair_cap),
+    matching_pcts: pctList(req.body.matching_pcts), repurchase_pcts: pctList(req.body.repurchase_pcts),
+    max_payout_pct: Number(req.body.max_payout_pct), cooling_off_days: Number(req.body.cooling_off_days), buyback_days: Number(req.body.buyback_days),
+    buyback_refund_pct: Number(req.body.buyback_refund_pct), default_bv_pct: Number(req.body.default_bv_pct),
+    ranks: names.map((n, i) => ({ name: clean(n, 30), pairs: Number(pairs[i]) })).filter(r => r.name).sort((x, y) => x.pairs - y.pairs),
+  };
+  const errs = P.validatePlan(p);
+  if (errs.length) return res.status(400).render('admin/plan', { title: 'Plan settings', p, defaults: P.DEFAULT_PLAN, error: errs.join(' ') });
+  const before = P.getPlan();
+  P.savePlan(p);
+  const changed = Object.keys(p).filter(k => JSON.stringify(p[k]) !== JSON.stringify(before[k]));
+  D.audit(req.user.id, 'plan_settings_updated', null, { changed, before: Object.fromEntries(changed.map(k => [k, before[k]])), after: Object.fromEntries(changed.map(k => [k, p[k]])) });
+  flash(req, 'ok', changed.length ? `Plan settings saved (${changed.join(', ')}). The public Income Plan page shows the new values; they apply to orders paid from now on.` : 'No changes.');
+  res.redirect('/admin/plan');
+});
+// ---------- Genealogy lookup ----------
+a.get('/genealogy', (req, res) => {
+  const q = clean(req.query.u, 40);
+  let root = null;
+  if (q) root = db.prepare("SELECT id, username, placement_parent_id FROM users WHERE role='member' AND (lower(username)=lower(?) OR referral_code=upper(?))").get(q, q);
+  else root = db.prepare("SELECT id, username, placement_parent_id FROM users WHERE role='member' AND placement_parent_id IS NULL ORDER BY (SELECT COUNT(*) FROM users c WHERE c.placement_parent_id=users.id) DESC, id LIMIT 1").get();
+  if (q && !root) flash(req, 'err', 'Member not found.');
+  const up = root && root.placement_parent_id ? db.prepare('SELECT username FROM users WHERE id=?').get(root.placement_parent_id) : null;
+  res.render('admin/genealogy', { title: 'Genealogy', q, t: root ? P.tree(root.id, 3) : null, up: up && up.username, base: '/admin/genealogy' });
+});
+// ---------- Commission runs ----------
+a.get('/commissions', (req, res) => {
+  const runs = db.prepare('SELECT r.*, u.username AS by_uid FROM commission_runs r LEFT JOIN users u ON u.id=r.by_user ORDER BY r.id DESC LIMIT 100').all();
+  const rows = db.prepare('SELECT c.*, b.username AS ben_uid, f.username AS from_uid FROM commissions c JOIN users b ON b.id=c.beneficiary_id LEFT JOIN users f ON f.id=c.from_user_id ORDER BY c.id DESC LIMIT 200').all();
+  const totals = db.prepare('SELECT status, COUNT(*) n, COALESCE(SUM(amount_paise),0) v FROM commissions GROUP BY status').all();
+  res.render('admin/commissions', { title: 'Commission runs', runs, rows, totals });
+});
+a.post('/commissions/run', (req, res) => {
+  const r = P.runCommissions({ trigger: 'manual', byUser: req.user.id });
+  D.audit(req.user.id, 'commission_run', null, `Manual run #${r.runId}: ${r.orders} new paid order(s), ${r.rows} commission entr${r.rows === 1 ? 'y' : 'ies'} (${inr(r.paid)}), ${r.released} matured commission(s) released${r.scale < 1 ? `, payout cap applied ×${r.scale.toFixed(4)}` : ''}.`);
+  flash(req, 'ok', `Run #${r.runId} done: ${r.orders} new paid order(s), ${r.rows} new commission entr${r.rows === 1 ? 'y' : 'ies'} (${inr(r.paid)}), ${r.released} released to wallets.`);
+  res.redirect('/admin/commissions');
+});
+// ---------- Buyback requests (admin only) ----------
+a.get('/buybacks', (req, res) => {
+  const rows = db.prepare(`SELECT b.*, o.product_name, o.qty, o.total_paise, o.paid_at, o.status AS order_status, u.name AS member, u.username AS member_uid, a.username AS admin
+    FROM buyback_requests b JOIN orders o ON o.id=b.order_id JOIN users u ON u.id=b.user_id LEFT JOIN users a ON a.id=b.processed_by ORDER BY (b.status='pending') DESC, b.id DESC`).all();
+  rows.forEach(r => { r.pendingComm = db.prepare("SELECT COUNT(*) n, COALESCE(SUM(amount_paise),0) v FROM commissions WHERE source_order_id=? AND status IN ('pending','released')").get(r.order_id); });
+  res.render('admin/buybacks', { title: 'Buyback requests', rows });
+});
+a.post('/buybacks/:id', (req, res) => {
+  const id = Number(req.params.id), action = req.body.action;
+  try {
+    const msg = db.transaction(() => {
+      const b = db.prepare("SELECT * FROM buyback_requests WHERE id=? AND status='pending'").get(id);
+      if (!b) throw new Error('Request not found or already processed.');
+      const o = db.prepare('SELECT * FROM orders WHERE id=?').get(b.order_id);
+      if (action === 'approve') {
+        const ref = clean(req.body.refund_ref, 200);
+        if (!req.body.received_unopened) throw new Error('Confirm that the product was received back unopened before approving.');
+        if (ref.length < 3) throw new Error('Enter the refund reference (UTR / PayPal transaction ID) of the refund you paid.');
+        if (!['paid', 'delivered'].includes(o.status)) throw new Error(`Order #${o.id} is ${o.status}; cannot buy back.`);
+        const refund = Math.floor(o.total_paise * P.getPlan().buyback_refund_pct / 100);
+        db.prepare("UPDATE orders SET status='returned', returned_at=datetime('now'), updated_at=datetime('now') WHERE id=?").run(o.id);
+        db.prepare('UPDATE products SET stock=stock+? WHERE id=?').run(o.qty, o.product_id);
+        const r = o.bv_processed ? P.reverseOrder(o.id, req.user.id, 'returned under buyback') : { reversedPending: 0, reversedReleased: 0, amount: 0 };
+        db.prepare("UPDATE buyback_requests SET status='approved', refund_paise=?, refund_ref=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(refund, ref, req.user.id, id);
+        const n = r.reversedPending + r.reversedReleased;
+        D.audit(req.user.id, 'buyback_approved', o.user_id, `Buyback #${id} for order #${o.id}: refund ${inr(refund)} (ref ${ref}); ${o.bv_total} BV removed; ${n} commission entr${n === 1 ? 'y' : 'ies'} clawed back (${inr(r.amount)}).`);
+        return `Buyback #${id} approved. Refund ${inr(refund)} recorded; ${n} related commission entr${n === 1 ? 'y' : 'ies'} (${inr(r.amount)}) clawed back.`;
+      } else if (action === 'reject') {
+        const note = clean(req.body.reason, 300);
+        if (note.length < 3) throw new Error('Enter a reason when rejecting.');
+        db.prepare("UPDATE buyback_requests SET status='rejected', admin_note=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(note, req.user.id, id);
+        D.audit(req.user.id, 'buyback_rejected', o.user_id, `Buyback #${id} for order #${o.id} rejected: ${note}`);
+        return `Buyback #${id} rejected.`;
+      }
+      throw new Error('Unknown action.');
+    })();
+    flash(req, 'ok', msg);
+  } catch (e) { flash(req, 'err', e.message); }
+  res.redirect('/admin/buybacks');
 });
 a.get('/password', (req, res) => res.render('admin/password', { title: 'Change password', min: 12 }));
 a.post('/password', (req, res) => changePassword(req, res, { view: 'admin/password', back: '/admin/password', min: 12, title: 'Change password' }));

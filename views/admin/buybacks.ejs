@@ -1,0 +1,25 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Buyback requests</h1><p class="muted small">Approve only after the unopened product is back with you and the <%= plan.buyback_refund_pct %>% refund has been paid externally. Approval marks the order returned, restores stock, removes its BV and claws back every commission from it.</p></div></div>
+<div class="card"><div class="table-wrap"><table class="table" id="buybacks"><thead><tr><th>#</th><th>Requested</th><th>Member</th><th>Order</th><th>Reason</th><th>Commissions at stake</th><th>Status / action</th></tr></thead><tbody>
+<% rows.forEach(b => { %><tr>
+  <td><%= b.id %></td><td class="small"><%= fmtDate(b.created_at) %></td><td><b><%= b.member %></b><br><span class="small muted"><%= b.member_uid %></span></td>
+  <td>#<%= b.order_id %> · <%= b.product_name %> × <%= b.qty %><br><span class="small muted"><%= inr(b.total_paise) %> · paid <%= fmtDate(b.paid_at) %> · <%= b.order_status %></span></td>
+  <td class="small"><%= b.reason %><br><span class="muted">member says unopened: <%= b.unopened ? 'yes' : 'no' %></span></td>
+  <td class="small"><%= b.pendingComm.n %> entr<%= b.pendingComm.n===1?'y':'ies' %> · <%= inr(b.pendingComm.v) %></td>
+  <td>
+  <% if (b.status === 'pending') { %>
+    <form method="post" action="/admin/buybacks/<%= b.id %>" class="form confirm">
+      <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="action" value="approve">
+      <label class="check small"><input type="checkbox" name="received_unopened" value="1" required> <span>Product received back unopened</span></label>
+      <input name="refund_ref" required minlength="3" maxlength="200" placeholder="Refund ref (UTR / PayPal txn)">
+      <button class="btn btn-sm btn-gold">Approve – refund <%= inr(Math.floor(b.total_paise * plan.buyback_refund_pct / 100)) %></button>
+    </form>
+    <form method="post" action="/admin/buybacks/<%= b.id %>" class="form">
+      <input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="action" value="reject">
+      <input name="reason" required minlength="3" maxlength="300" placeholder="Reason for rejection"><button class="btn btn-sm btn-danger">Reject</button>
+    </form>
+  <% } else { %><span class="pill <%= b.status==='approved'?'paid':'cancelled' %>"><%= b.status %></span><br><span class="small muted"><%= b.status==='approved' ? 'Refund ' + inr(b.refund_paise) + ' · ref ' + b.refund_ref : b.admin_note %> · by <%= b.admin %></span><% } %>
+  </td></tr><% }) %>
+<% if (!rows.length) { %><tr><td colspan="7" class="muted">No buyback requests.</td></tr><% } %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>

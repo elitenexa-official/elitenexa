@@ -1,0 +1,12 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Commission runs</h1><p class="muted small">A run happens automatically when an order is marked paid. "Run now" processes any paid orders not yet processed and releases matured commissions (cooling-off over) to wallets.</p></div>
+<form method="post" action="/admin/commissions/run" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-gold">Run now</button></form></div>
+<div class="stats"><% ['pending','released','reversed'].forEach(st => { const t = totals.find(x => x.status === st) || { n: 0, v: 0 }; %><div class="stat"><small><%= st %></small><b><%= inr(t.v) %></b><span class="small muted"><%= t.n %> entries</span></div><% }) %></div>
+<div class="card"><h3>Runs</h3><div class="table-wrap"><table class="table" id="runs"><thead><tr><th>#</th><th>Date</th><th>Trigger</th><th class="r">Sales</th><th class="r">Gross</th><th class="r">Cap</th><th class="r">Recorded</th><th>Scale</th><th class="r">Released</th><th>Note</th></tr></thead><tbody>
+<% runs.forEach(r => { %><tr><td><%= r.id %></td><td class="small"><%= fmtDate(r.created_at) %></td><td class="small"><%= r.trigger %><% if (r.by_uid) { %> · <%= r.by_uid %><% } %></td><td class="r"><%= inr(r.sales_paise) %></td><td class="r"><%= inr(r.gross_paise) %></td><td class="r"><%= inr(r.cap_paise) %></td><td class="r"><%= inr(r.paid_paise) %></td><td><%= r.scaled ? '×' + Number(r.scale).toFixed(4) : '—' %></td><td class="r"><%= r.released_count %></td><td class="small"><%= r.note || '' %></td></tr><% }) %>
+<% if (!runs.length) { %><tr><td colspan="10" class="muted">No runs yet.</td></tr><% } %>
+</tbody></table></div></div>
+<div class="card"><h3>Latest commission entries</h3><div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Beneficiary</th><th>Type</th><th>Order</th><th>From</th><th>Details</th><th class="r">Amount</th><th>Status</th></tr></thead><tbody>
+<% rows.forEach(c => { %><tr><td><%= c.id %></td><td><%= c.ben_uid %></td><td><%= TYPE_LABEL[c.type] %><% if (c.type!=='pair') { %> L<%= c.level %><% } %></td><td>#<%= c.source_order_id %></td><td class="small"><%= c.from_uid || '' %></td><td class="small"><%= c.note %></td><td class="r"><%= inr(c.amount_paise) %></td><td><span class="pill <%= c.status==='released'?'paid':(c.status==='pending'?'pending':'cancelled') %>"><%= c.status %></span></td></tr><% }) %>
+</tbody></table></div></div>
+<%- include('../partials/footer') %>

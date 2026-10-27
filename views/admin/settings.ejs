@@ -3,17 +3,19 @@
 <div class="grid2">
 <form method="post" action="/admin/settings" class="card form">
   <input type="hidden" name="_csrf" value="<%= csrf %>">
-  <h3>Commission plan (product sales only)</h3>
-  <label>Commission % per upline level (comma-separated, L1,L2,L3…)<input name="commission_levels" required value="<%= s.commission_levels.join(', ') %>"></label>
+  <h3>General</h3>
   <div class="row2">
-    <label>Team depth shown / counted<input type="number" name="team_depth" min="1" max="20" value="<%= s.team_depth %>"></label>
+    <label>Sponsor-team depth shown on "My team"<input type="number" name="team_depth" min="1" max="20" value="<%= s.team_depth %>"></label>
     <label>Minimum withdrawal (₹)<input type="number" name="min_withdrawal_rupees" min="0" value="<%= s.min_withdrawal_rupees %>"></label>
   </div>
-  <h3>Ranks (sales volume targets in ₹)</h3>
-  <div class="table-wrap"><table class="table"><thead><tr><th>Rank name</th><th>Personal ≥</th><th>Team ≥</th></tr></thead><tbody>
-  <% const rs = s.ranks.concat([{name:'',personal:0,team:0}]); rs.forEach(r => { %><tr><td><input name="rank_name" value="<%= r.name %>" placeholder="(add rank)"></td><td><input type="number" min="0" name="rank_personal" value="<%= r.personal %>"></td><td><input type="number" min="0" name="rank_team" value="<%= r.team %>"></td></tr><% }) %>
-  </tbody></table></div>
-  <p class="small muted">Clear a rank name to remove it. Changes are published immediately on the public Income Plan page and logged in the audit log. No setting can create income for joining or recruitment.</p>
+  <h3>Grievance Officer (shown on the public Grievance page)</h3>
+  <label>Name<input name="g_name" required maxlength="120" value="<%= s.grievance.name %>"></label>
+  <div class="row2">
+    <label>Email<input type="email" name="g_email" required maxlength="200" value="<%= s.grievance.email %>"></label>
+    <label>Phone<input name="g_phone" required maxlength="30" value="<%= s.grievance.phone %>"></label>
+  </div>
+  <label>Address<input name="g_address" maxlength="300" value="<%= s.grievance.address %>"></label>
+  <p class="small muted">Changes are logged in the audit log. The compensation plan (pairs, matching, repurchase, caps, ranks) is on <a href="/admin/plan">Plan settings</a>.</p>
   <button class="btn btn-gold">Save settings</button>
 </form>
 <div class="card"><h3>Admin password</h3><p class="small muted">Change the admin login password on its own page.</p><a class="btn btn-outline" href="/admin/password">Change password</a></div>

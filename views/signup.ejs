@@ -19,6 +19,8 @@
       <label>Confirm password<input type="password" name="password2" required minlength="8" maxlength="128" autocomplete="new-password"></label>
     </div>
     <label>Referral code or sponsor's User ID (optional)<input name="ref" maxlength="20" value="<%= form.ref || '' %>" placeholder="e.g. ENAB12CD" autocapitalize="none"></label>
+    <label>Placement leg under your sponsor<select name="leg" id="leg"><option value="L"<%= form.leg !== 'R' ? ' selected' : '' %>>Left leg</option><option value="R"<%= form.leg === 'R' ? ' selected' : '' %>>Right leg</option></select>
+      <small class="hint muted">You are placed at the outermost free spot of this leg in your sponsor's binary team. Placement earns nobody anything by itself.</small></label>
     <label class="check"><input type="checkbox" name="agree" value="1" required> <span>I have read the <a href="/income-plan" target="_blank">Income Plan &amp; income disclaimer</a> and understand that earnings come only from product sales and are not guaranteed.</span></label>
     <button class="btn btn-gold btn-block">Create free account</button>
     <p class="small center">Already a member? <a href="/login">Log in</a></p>

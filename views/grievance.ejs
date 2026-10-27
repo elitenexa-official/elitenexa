@@ -1,0 +1,18 @@
+<%- include('partials/header') %>
+<section class="page-hero"><div class="wrap"><h1>Grievance Officer</h1><p class="lead">As required by the Consumer Protection (Direct Selling) Rules, 2021.</p></div></section>
+<section class="wrap pad narrow-lg">
+  <div class="card highlight" id="grievance-officer">
+    <p><b>Name:</b> <%= g.name %></p>
+    <p><b>Email:</b> <a href="mailto:<%= g.email %>"><%= g.email %></a></p>
+    <p><b>Phone:</b> <%= g.phone %></p>
+    <p><b>Address:</b> <%= g.address %></p>
+  </div>
+  <h2>How we handle complaints</h2>
+  <ul>
+    <li>We acknowledge every complaint within 48 hours and give you a complaint number.</li>
+    <li>We resolve complaints within <b>15 days</b> of receipt and tell you the outcome in writing.</li>
+    <li>You can also write to us through the <a href="/contact">Contact page</a>.</li>
+    <li>If you are not satisfied, you may approach the National Consumer Helpline (1915) or the consumer commission.</li>
+  </ul>
+</section>
+<%- include('partials/footer') %>

@@ -1,0 +1,11 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Genealogy</h1><p class="muted small">Binary placement tree of any member (3 levels). Click a member to go down; use "Up" to go up.</p></div></div>
+<div class="card">
+  <form method="get" action="/admin/genealogy" class="form-inline"><input name="u" placeholder="User ID or referral code" value="<%= q %>"><button class="btn btn-sm btn-gold">Look up</button></form>
+  <% if (t) { const r = t.nodes[0]; %>
+    <div class="section-head"><h3><%= r.name %> <span class="small muted">(<%= r.username %> · sponsor <%= r.sponsor || '—' %> · placed <%= r.side || 'as root' %>)</span></h3><% if (up) { %><a class="link small" href="/admin/genealogy?u=<%= encodeURIComponent(up) %>">↑ Up to <%= up %></a><% } %></div>
+    <p class="small">Left leg: <b><%= t.counts.L %></b> members · Right leg: <b><%= t.counts.R %></b> · carry-forward L <b><%= r.legs.left_bv %></b> / R <b><%= r.legs.right_bv %></b> BV · pairs paid <%= r.legs.pairs_paid %>, flushed <%= r.legs.pairs_flushed %> · rank <%= r.rank %></p>
+    <%- include('../partials/binary-tree', { t, base: '/admin/genealogy' }) %>
+  <% } else { %><p class="muted">No members yet.</p><% } %>
+</div>
+<%- include('../partials/footer') %>

@@ -1,0 +1,21 @@
+<%- include('partials/header') %>
+<section class="page-hero"><div class="wrap"><h1>Buyback &amp; Cooling-off Policy</h1><p class="lead">Changed your mind? You can return unopened products.</p></div></section>
+<section class="wrap pad narrow-lg">
+  <div class="card highlight" id="buyback-terms">
+    <ul>
+      <li><b>Cooling-off / buyback window:</b> <%= plan.buyback_days %> days from the date your order was paid.</li>
+      <li><b>Condition:</b> products must be unopened, unused and in saleable condition.</li>
+      <li><b>Refund:</b> <%= plan.buyback_refund_pct %>% of the amount you paid, to your original payment method or bank/UPI/PayPal, after the product reaches us and EliteNexa approves the request.</li>
+    </ul>
+  </div>
+  <h2>How to request</h2>
+  <ol>
+    <li>Log in and open <a href="/orders">My orders</a>.</li>
+    <li>Click <b>Request buyback</b> next to the order, confirm the product is unopened and give a short reason.</li>
+    <li>We contact you about returning the product. After we receive it, an admin approves the request and pays the refund; you see the refund reference on the order.</li>
+  </ol>
+  <h2>What happens to commissions</h2>
+  <p>When a buyback is approved, the order's BV is removed from the binary tree and all commissions paid on it are reversed (clawed back), including commissions already released to wallets. That is why commissions stay pending for <%= plan.cooling_off_days %> days. While a buyback request is pending, that order's commissions are not released.</p>
+  <p>Questions or complaints: contact our <a href="/grievance">Grievance Officer</a>.</p>
+</section>
+<%- include('partials/footer') %>
