@@ -33,3 +33,8 @@ services:
       # Temporary (>= 24 chars): enables /admin/setup-hash. Remove it once ADMIN_PASSWORD_HASH is set.
       - key: ADMIN_SETUP_TOKEN
         sync: false
+      # Optional: base32 TOTP secret that keeps two-factor authentication ON for the 'admin' account across restarts
+      # (the free plan wipes the DB). Copy it from the note shown on /admin/security right after enabling 2FA.
+      # Keep it secret: anyone with it can generate the admin's 6-digit codes.
+      - key: ADMIN_TOTP_SECRET
+        sync: false

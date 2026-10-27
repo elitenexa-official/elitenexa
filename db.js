@@ -162,6 +162,22 @@ if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'country'
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_commission_once ON wallet_ledger(commission_id, type) WHERE commission_id IS NOT NULL');
 }
 
+// ---------- migration: TOTP two-factor authentication ----------
+{
+  const addCol = (name, ddl) => { if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === name)) db.exec(`ALTER TABLE users ADD COLUMN ${name} ${ddl}`); };
+  addCol('totp_secret_enc', 'TEXT');                      // AES-256-GCM encrypted base32 secret (key derived from SESSION_SECRET)
+  addCol('totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  addCol('totp_last_step', 'INTEGER NOT NULL DEFAULT 0'); // last accepted 30-s step (blocks code reuse)
+  addCol('totp_enabled_at', 'TEXT');
+  db.exec(`CREATE TABLE IF NOT EXISTS backup_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    code_hash TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON backup_codes(user_id);`);
+}
+
 // ---------- migration: every account gets a unique, case-insensitive User ID (users.username) ----------
 const USER_ID_RE = /^[A-Za-z0-9_]{4,20}$/;
 const RESERVED_IDS = new Set(['admin', 'administrator', 'root', 'support', 'elitenexa', 'system', 'help', 'official', 'staff', 'moderator']);
@@ -206,6 +222,7 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_users_email_nocase ON users(lower(email)
 const DEFAULT_SETTINGS = {
   team_depth: 5,                           // how deep "My Team" (sponsor list) shows
   min_withdrawal_rupees: 500,
+  require_2fa_managers: true,             // Approval Managers must set up 2FA before using the panel
   grievance: { name: 'Grievance Officer (to be appointed)', email: 'grievance@elitenexa.example', phone: '+91 00000 00000', address: 'EliteNexa, India (registered address to be added)' },
 };
 

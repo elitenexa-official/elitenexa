@@ -10,6 +10,8 @@ const bcrypt = require('bcryptjs');
 const D = require('./db');
 const CUR = require('./currency');
 const P = require('./plan');
+const TOTP = require('./totp');
+const QRCode = require('qrcode');
 if (process.env.DEMO_MODE === '1') require('./demo').seedDemo();
 const { db } = D;
 
@@ -22,6 +24,25 @@ if (!SECRET) {
   const f = path.join(D.DATA_DIR, '.session_secret');
   if (!fs.existsSync(f)) fs.writeFileSync(f, crypto.randomBytes(48).toString('hex'), { mode: 0o600 });
   SECRET = fs.readFileSync(f, 'utf8').trim();
+}
+TOTP.init(SECRET); // 2FA secrets are encrypted at rest with a key derived from SESSION_SECRET
+
+// ADMIN_TOTP_SECRET (base32): the 'admin' account gets 2FA enforced with this secret on every start, so 2FA survives
+// DB resets on hosts without a persistent disk (Render free). The value is never logged.
+const ENV_TOTP_RAW = process.env.ADMIN_TOTP_SECRET ? String(process.env.ADMIN_TOTP_SECRET) : '';
+const ADMIN_TOTP_ENV = ENV_TOTP_RAW ? TOTP.validSecret(ENV_TOTP_RAW) : null;
+if (ENV_TOTP_RAW && !ADMIN_TOTP_ENV) console.warn('ADMIN_TOTP_SECRET is set but is not a valid base32 secret (min 16 characters); ignoring it.');
+if (ADMIN_TOTP_ENV) {
+  const adm = db.prepare("SELECT id, totp_secret_enc, totp_enabled FROM users WHERE lower(username)='admin' AND role='admin'").get();
+  if (!adm) console.warn('ADMIN_TOTP_SECRET is set but there is no admin account.');
+  else if (!(adm.totp_enabled && TOTP.decrypt(adm.totp_secret_enc) === ADMIN_TOTP_ENV)) {
+    db.transaction(() => {
+      db.prepare("UPDATE users SET totp_secret_enc=?, totp_enabled=1, totp_last_step=0, totp_enabled_at=datetime('now') WHERE id=?").run(TOTP.encrypt(ADMIN_TOTP_ENV), adm.id);
+      db.prepare('DELETE FROM backup_codes WHERE user_id=?').run(adm.id);
+      D.audit(adm.id, 'totp_enforced_from_env', adm.id, 'Two-factor authentication for the admin account enforced from the ADMIN_TOTP_SECRET server setting at startup');
+    })();
+    console.log('Admin two-factor authentication enforced from ADMIN_TOTP_SECRET.');
+  }
 }
 
 const app = express();
@@ -79,7 +100,7 @@ app.use((req, res, next) => { if (!req.session.csrf) req.session.csrf = crypto.r
 app.use((req, res, next) => {
   res.locals.user = null;
   if (req.session.uid) {
-    const u = db.prepare('SELECT id, name, email, username, phone, country, role, referral_code, sponsor_id, status, created_at FROM users WHERE id=?').get(req.session.uid);
+    const u = db.prepare('SELECT id, name, email, username, phone, country, role, referral_code, sponsor_id, status, created_at, totp_enabled FROM users WHERE id=?').get(req.session.uid);
     if (!u || u.status !== 'active') { req.session.uid = null; } else { req.user = u; res.locals.user = u; }
   }
   res.locals.csrf = req.session.csrf;
@@ -111,6 +132,13 @@ app.use((req, res, next) => {
     if (!ok) return res.status(403).render('error', { title: 'Security check failed', message: 'Your form expired or was invalid. Please go back, refresh the page and try again.' });
   }
   next();
+});
+// Approval Managers must set up 2FA (admin setting "Require 2FA for managers", default on) before using anything else.
+app.use((req, res, next) => {
+  if (!(req.user && req.user.role === 'manager' && !req.user.totp_enabled && D.getSettings().require_2fa_managers)) return next();
+  if (req.path === '/admin/security' || req.path.startsWith('/admin/security/') || req.path === '/logout') return next();
+  if (req.method === 'GET') { flash(req, 'warn', 'Two-factor authentication is required for Approval Managers. Please set it up to continue.'); return res.redirect('/admin/security'); }
+  return res.status(403).render('error', { title: '2FA required', message: 'Please set up two-factor authentication first (Security page).' });
 });
 
 const requireMember = (req, res, next) => (req.user && req.user.role === 'member') ? next() : res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
@@ -225,14 +253,165 @@ app.post('/login', (req, res) => {
     return res.status(401).render('login', { title: 'Log in', form: { login: id }, next, error: 'Incorrect User ID/email or password.' });
   }
   if (u.status !== 'active') return res.status(403).render('login', { title: 'Log in', form: { login: id }, next, error: 'This account is blocked. Please contact support.' });
+  if (u.totp_enabled) {
+    // password OK -> second step. The session only holds a pending user id (5 min); no login session yet.
+    return req.session.regenerate(() => {
+      req.session.pending2fa = { uid: u.id, exp: Date.now() + TWOFA_PENDING_MS, fails: 0, next };
+      res.redirect('/login/2fa');
+    });
+  }
+  req.session.regenerate(() => { req.session.uid = u.id; res.redirect(loginTarget(u, next)); });
+});
+function loginTarget(u, next) {
+  const safeNext = next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : null;
+  const ok = safeNext && (isStaff(u) ? safeNext.startsWith('/admin') : !safeNext.startsWith('/admin'));
+  return ok ? safeNext : (isStaff(u) ? '/admin' : '/dashboard');
+}
+
+// ---------- two-factor authentication (TOTP, RFC 6238) ----------
+const TWOFA_PENDING_MS = 5 * 60 * 1000, TWOFA_MAX_FAILS = 5;
+function makeLimiter(max, ms) {
+  const map = new Map();
+  const live = (k) => { const now = Date.now(); const a = (map.get(k) || []).filter(t => now - t < ms); map.set(k, a); return a; };
+  return { hit: (k) => live(k).push(Date.now()), blocked: (k) => live(k).length >= max };
+}
+const twofaIpFails = makeLimiter(15, 15 * 60 * 1000);   // wrong 2FA codes per IP
+const twofaUserFails = makeLimiter(20, 15 * 60 * 1000); // wrong 2FA codes per account (any IP)
+const twofaRow = (uid) => db.prepare('SELECT id, name, username, role, status, password_hash, totp_secret_enc, totp_enabled, totp_last_step, totp_enabled_at FROM users WHERE id=?').get(uid);
+const backupLeft = (uid) => db.prepare('SELECT COUNT(*) n FROM backup_codes WHERE user_id=? AND used_at IS NULL').get(uid).n;
+const isMainAdmin = (u) => !!u && u.role === 'admin' && String(u.username).toLowerCase() === 'admin';
+const adminEnvEnforced = (u) => !!ADMIN_TOTP_ENV && isMainAdmin(u);
+// Checks a 6-digit TOTP code (each 30-s code works once) or an unused backup code. Marks it used on success.
+function checkSecondFactor(row, input, { allowBackup = true } = {}) {
+  const secret = TOTP.decrypt(row.totp_secret_enc);
+  if (!secret) return { ok: false, error: 'Two-factor data for this account cannot be read (the server secret changed). Ask the admin to reset your 2FA.' };
+  const raw = String(input == null ? '' : input).trim().slice(0, 40);
+  if (/^[\d\s]+$/.test(raw)) {
+    const step = TOTP.verify(secret, raw, row.totp_last_step);
+    if (step !== null && db.prepare('UPDATE users SET totp_last_step=? WHERE id=? AND totp_last_step<?').run(step, row.id, step).changes) return { ok: true, method: 'totp' };
+  } else if (allowBackup && TOTP.looksLikeBackup(raw)) {
+    const r = db.prepare("UPDATE backup_codes SET used_at=datetime('now') WHERE user_id=? AND code_hash=? AND used_at IS NULL").run(row.id, TOTP.hashBackup(raw));
+    if (r.changes) {
+      const left = backupLeft(row.id);
+      D.audit(row.id, 'backup_code_used', row.id, `One-time backup code used by ${row.role} ${row.username} (${left} left)`);
+      return { ok: true, method: 'backup', left };
+    }
+  }
+  return { ok: false, error: allowBackup ? 'Incorrect or already used code. Please try again.' : 'Incorrect or already used authenticator code.' };
+}
+function pending2fa(req) {
+  const p = req.session.pending2fa;
+  if (p && p.exp > Date.now()) return p;
+  if (p) { delete req.session.pending2fa; flash(req, 'err', 'Your sign-in step expired. Please log in again.'); }
+  return null;
+}
+app.get('/login/2fa', (req, res) => {
+  if (req.user) return res.redirect(isStaff(req.user) ? '/admin' : '/dashboard');
+  const p = pending2fa(req); if (!p) return res.redirect('/login');
+  res.set('Cache-Control', 'no-store').render('login-2fa', { title: 'Two-factor authentication', error: null });
+});
+app.post('/login/2fa', (req, res) => {
+  const p = pending2fa(req); if (!p) return res.redirect('/login');
+  const row = twofaRow(p.uid);
+  if (!row || row.status !== 'active' || !row.totp_enabled) { delete req.session.pending2fa; return res.redirect('/login'); }
+  const restart = (code, error) => { delete req.session.pending2fa; return res.status(code).render('login', { title: 'Log in', form: { login: row.username }, next: p.next, error }); };
+  if (twofaIpFails.blocked(req.ip) || twofaUserFails.blocked(row.id)) return restart(429, 'Too many wrong codes. Please wait 15 minutes and log in again.');
+  const r = checkSecondFactor(row, req.body.code);
+  if (!r.ok) {
+    p.fails = (p.fails || 0) + 1; twofaIpFails.hit(req.ip); twofaUserFails.hit(row.id);
+    if (p.fails >= TWOFA_MAX_FAILS) return restart(401, 'Too many wrong codes. Please log in again with your password.');
+    return res.status(401).set('Cache-Control', 'no-store').render('login-2fa', { title: 'Two-factor authentication', error: `${r.error} (${TWOFA_MAX_FAILS - p.fails} attempt${TWOFA_MAX_FAILS - p.fails === 1 ? '' : 's'} left)` });
+  }
+  const next = p.next;
   req.session.regenerate(() => {
-    req.session.uid = u.id;
-    const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : null;
-    const ok = safeNext && (isStaff(u) ? safeNext.startsWith('/admin') : !safeNext.startsWith('/admin'));
-    res.redirect(ok ? safeNext : (isStaff(u) ? '/admin' : '/dashboard'));
+    req.session.uid = row.id;
+    if (r.method === 'backup') flash(req, 'warn', `You signed in with a one-time backup code. ${r.left} backup code${r.left === 1 ? '' : 's'} left. Generate new ones on the Security page if you are running low.`);
+    res.redirect(loginTarget(row, next));
   });
 });
 app.post('/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
+
+// ---------- Security page (2FA): /admin/security for admin + managers, /profile/security for members ----------
+// router: the router to mount on; local: path inside that router; base: the full public URL of the page.
+function mountSecurity(router, local, base) {
+  const required = (u) => adminEnvEnforced(u) || (u.role === 'manager' && D.getSettings().require_2fa_managers);
+  const page = (req, res, extra = {}, code = 200) => {
+    const row = twofaRow(req.user.id);
+    res.status(code).set('Cache-Control', 'no-store').render('security', { title: 'Security (2FA)', base, mode: 'status', row, left: backupLeft(row.id),
+      envEnforced: adminEnvEnforced(req.user), required: required(req.user), isMainAdmin: isMainAdmin(req.user), error: null, ...extra });
+  };
+  const setupSecret = (req) => {
+    const s = req.session.totpSetup;
+    if (!s || s.uid !== req.user.id || s.exp < Date.now()) { delete req.session.totpSetup; return null; }
+    return TOTP.decrypt(s.enc);
+  };
+  const newBackupCodes = (uid) => {
+    const codes = TOTP.generateBackupCodes(10);
+    db.prepare('DELETE FROM backup_codes WHERE user_id=?').run(uid);
+    const ins = db.prepare('INSERT INTO backup_codes(user_id, code_hash) VALUES (?,?)');
+    codes.forEach(c => ins.run(uid, TOTP.hashBackup(c)));
+    return codes;
+  };
+  router.get(local, (req, res) => page(req, res));
+  router.post(local + '/start', (req, res) => {
+    if (twofaRow(req.user.id).totp_enabled) return res.redirect(base);
+    // the new secret lives (encrypted) in the session until the user proves it works with a code
+    req.session.totpSetup = { uid: req.user.id, enc: TOTP.encrypt(TOTP.generateSecret()), exp: Date.now() + 15 * 60 * 1000 };
+    res.redirect(base + '/setup');
+  });
+  const renderSetup = async (req, res, error = null) => {
+    const secret = setupSecret(req);
+    if (!secret || twofaRow(req.user.id).totp_enabled) { if (error) flash(req, 'err', 'The setup expired. Please start again.'); return res.redirect(base); }
+    const uri = TOTP.otpauthUri(secret, req.user.username);
+    const qr = await QRCode.toDataURL(uri, { errorCorrectionLevel: 'M', margin: 1, width: 240, color: { dark: '#000000', light: '#ffffff' } });
+    page(req, res, { mode: 'setup', qr, secret, secretGrouped: TOTP.groupSecret(secret), error }, error ? 400 : 200);
+  };
+  router.get(local + '/setup', (req, res, next) => renderSetup(req, res).catch(next));
+  router.post(local + '/confirm', (req, res, next) => {
+    const secret = setupSecret(req);
+    if (!secret || twofaRow(req.user.id).totp_enabled) { flash(req, 'err', 'The setup expired. Please start again.'); return res.redirect(base); }
+    const step = TOTP.verify(secret, req.body.code, 0);
+    if (step === null) return renderSetup(req, res, 'That code did not match. Check the time on your phone is automatic and enter the current 6-digit code.').catch(next);
+    let codes;
+    db.transaction(() => {
+      db.prepare("UPDATE users SET totp_secret_enc=?, totp_enabled=1, totp_last_step=?, totp_enabled_at=datetime('now') WHERE id=?").run(TOTP.encrypt(secret), step, req.user.id);
+      codes = newBackupCodes(req.user.id);
+      D.audit(req.user.id, 'totp_enabled', req.user.id, `Two-factor authentication enabled by ${req.user.role} ${req.user.username} (10 backup codes issued)`);
+    })();
+    delete req.session.totpSetup;
+    try { db.prepare("DELETE FROM sessions WHERE sid<>? AND json_extract(sess,'$.uid')=?").run(req.sessionID, req.user.id); } catch (_) {}
+    req.user.totp_enabled = 1;
+    // owner note: on hosts whose DB resets, the admin can pin this secret via the ADMIN_TOTP_SECRET env var
+    page(req, res, { mode: 'enabled', codes, envSecret: isMainAdmin(req.user) && !ADMIN_TOTP_ENV ? secret : null });
+  });
+  router.post(local + '/disable', (req, res) => {
+    const row = twofaRow(req.user.id);
+    if (!row.totp_enabled) return res.redirect(base);
+    if (adminEnvEnforced(req.user)) return page(req, res, { error: '2FA for this account is enforced by the server setting ADMIN_TOTP_SECRET. Remove that setting on the hosting dashboard to turn it off.' }, 400);
+    if (req.user.role === 'manager' && D.getSettings().require_2fa_managers) return page(req, res, { error: '2FA is required for Approval Managers. If you lost your phone, ask the admin to reset your 2FA.' }, 400);
+    if (twofaUserFails.blocked(row.id) || twofaIpFails.blocked(req.ip)) return page(req, res, { error: 'Too many wrong codes. Please wait 15 minutes and try again.' }, 429);
+    if (!bcrypt.compareSync(String(req.body.current_password || ''), row.password_hash)) { twofaUserFails.hit(row.id); return page(req, res, { error: 'Current password is incorrect.' }, 400); }
+    const r = checkSecondFactor(row, req.body.code);
+    if (!r.ok) { twofaUserFails.hit(row.id); twofaIpFails.hit(req.ip); return page(req, res, { error: r.error }, 400); }
+    db.transaction(() => {
+      db.prepare('UPDATE users SET totp_secret_enc=NULL, totp_enabled=0, totp_last_step=0, totp_enabled_at=NULL WHERE id=?').run(row.id);
+      db.prepare('DELETE FROM backup_codes WHERE user_id=?').run(row.id);
+      D.audit(row.id, 'totp_disabled', row.id, `Two-factor authentication disabled by ${row.role} ${row.username} (password + ${r.method === 'backup' ? 'backup code' : 'authenticator code'} confirmed)`);
+    })();
+    flash(req, 'ok', 'Two-factor authentication is now OFF for your account. Your backup codes no longer work.');
+    res.redirect(base);
+  });
+  router.post(local + '/backup-codes', (req, res) => {
+    const row = twofaRow(req.user.id);
+    if (!row.totp_enabled) return res.redirect(base);
+    if (twofaUserFails.blocked(row.id) || twofaIpFails.blocked(req.ip)) return page(req, res, { error: 'Too many wrong codes. Please wait 15 minutes and try again.' }, 429);
+    const r = checkSecondFactor(row, req.body.code, { allowBackup: false });
+    if (!r.ok) { twofaUserFails.hit(row.id); twofaIpFails.hit(req.ip); return page(req, res, { error: r.error }, 400); }
+    let codes;
+    db.transaction(() => { codes = newBackupCodes(row.id); D.audit(row.id, 'backup_codes_regenerated', row.id, `New set of 10 backup codes generated by ${row.role} ${row.username} (old codes invalidated)`); })();
+    page(req, res, { mode: 'enabled', codes, regenerated: true, envSecret: null });
+  });
+}
 
 // ---------- member ----------
 const m = express.Router();
@@ -384,6 +563,7 @@ m.post('/wallet/withdraw', (req, res) => {
   } catch (e) { flash(req, 'err', e.message); }
   res.redirect('/wallet');
 });
+mountSecurity(m, '/profile/security', '/profile/security');
 app.use(m);
 
 // ---------- admin ----------
@@ -393,6 +573,7 @@ a.use(requireStaff);
 const MANAGER_ALLOWED = [
   ['GET', /^\/$/], ['GET', /^\/orders$/], ['POST', /^\/orders\/\d+\/status$/],
   ['GET', /^\/withdrawals$/], ['POST', /^\/withdrawals\/\d+$/],
+  ['GET', /^\/security(\/setup)?$/], ['POST', /^\/security\/(start|confirm|disable|backup-codes)$/],
 ];
 a.use((req, res, next) => {
   if (req.user.role === 'admin') return next();
@@ -400,6 +581,7 @@ a.use((req, res, next) => {
   return forbidden(res);
 });
 a.use((req, res, next) => { res.locals.money = inr; res.locals.inrHint = () => ''; next(); }); // staff area: base currency (INR)
+mountSecurity(a, '/security', '/admin/security');
 a.get('/', (req, res) => {
   P.releaseMatured();
   const q = (sql, ...p) => db.prepare(sql).get(...p);
@@ -569,8 +751,9 @@ a.post('/settings', (req, res) => {
   if (g.name.length < 3 || !EMAIL_RE.test(g.email) || g.phone.length < 6) errs.push('Grievance Officer needs a name, a valid email and a phone number.');
   if (errs.length) { flash(req, 'err', errs.join(' ')); return res.redirect('/admin/settings'); }
   const before = D.getSettings();
-  D.saveSetting('team_depth', depth); D.saveSetting('min_withdrawal_rupees', minW); D.saveSetting('grievance', g);
-  D.audit(req.user.id, 'settings_updated', null, { before: { team_depth: before.team_depth, min_withdrawal_rupees: before.min_withdrawal_rupees, grievance: before.grievance }, after: { team_depth: depth, min_withdrawal_rupees: minW, grievance: g } });
+  const req2fa = !!req.body.require_2fa_managers;
+  D.saveSetting('team_depth', depth); D.saveSetting('min_withdrawal_rupees', minW); D.saveSetting('grievance', g); D.saveSetting('require_2fa_managers', req2fa);
+  D.audit(req.user.id, 'settings_updated', null, { before: { team_depth: before.team_depth, min_withdrawal_rupees: before.min_withdrawal_rupees, grievance: before.grievance, require_2fa_managers: before.require_2fa_managers }, after: { team_depth: depth, min_withdrawal_rupees: minW, grievance: g, require_2fa_managers: req2fa } });
   flash(req, 'ok', 'Settings saved.');
   res.redirect('/admin/settings');
 });
@@ -680,7 +863,7 @@ a.post('/currencies/:code', (req, res) => {
 });
 
 // ---------- Approval Managers (admin only) ----------
-const managerList = () => db.prepare("SELECT id, name, username, status, created_at FROM users WHERE role='manager' ORDER BY id").all();
+const managerList = () => db.prepare("SELECT id, name, username, status, created_at, totp_enabled FROM users WHERE role='manager' ORDER BY id").all();
 const renderManagers = (res, extra = {}, code = 200) => res.status(code).render('admin/managers', { title: 'Approval Managers', managers: managerList(), form: {}, error: null, ...extra });
 a.get('/managers', (req, res) => renderManagers(res));
 a.post('/managers', (req, res) => {
@@ -713,6 +896,17 @@ a.post('/managers/:id/password', (req, res) => {
   dropSessions(mg.id);
   D.audit(req.user.id, 'manager_password_reset', mg.id, `Password reset for Approval Manager "${mg.username}" (their sessions signed out)`);
   flash(req, 'ok', `Password for ${mg.username} reset. Their existing sessions were signed out.`); res.redirect('/admin/managers');
+});
+a.post('/managers/:id/2fa-reset', (req, res) => {
+  const mg = getManager(req.params.id); if (!mg) { flash(req, 'err', 'Manager not found.'); return res.redirect('/admin/managers'); }
+  db.transaction(() => {
+    db.prepare('UPDATE users SET totp_secret_enc=NULL, totp_enabled=0, totp_last_step=0, totp_enabled_at=NULL WHERE id=?').run(mg.id);
+    db.prepare('DELETE FROM backup_codes WHERE user_id=?').run(mg.id);
+    D.audit(req.user.id, 'manager_2fa_reset', mg.id, `Two-factor authentication reset for Approval Manager "${mg.username}" by admin ${req.user.username} (their sessions signed out)`);
+  })();
+  dropSessions(mg.id);
+  flash(req, 'ok', `2FA for ${mg.username} was reset. ${D.getSettings().require_2fa_managers ? 'They must set it up again at their next login.' : 'They can log in with their password only.'}`);
+  res.redirect('/admin/managers');
 });
 a.get('/messages', (req, res) => res.render('admin/messages', { title: 'Contact messages', rows: db.prepare('SELECT * FROM contact_messages ORDER BY id DESC').all() }));
 // ---------- one-time admin password-hash tool (only when ADMIN_SETUP_TOKEN is set, >= 24 chars) ----------

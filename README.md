@@ -30,6 +30,7 @@ Environment variables:
 - Members pick their own **User ID** at signup (4–20 letters/numbers/_, unique case-insensitively) plus a password (min 8, confirmed). Login accepts User ID or email.
 - Referral: `?ref=` / the signup field accept a member's referral code **or** their User ID.
 - Change password: members `/profile/password`, admin `/admin/password` (12+ chars; other sessions are signed out; audit-logged).
+- Two-factor authentication: see **Two-factor authentication (2FA)** below.
 
 ## Staff roles
 - **Admin** (`admin`): full access to `/admin`.
@@ -68,8 +69,25 @@ All values below are defaults and can be changed in **Admin → Plan settings** 
 - **`DEMO_MODE=1`:** on a DB with no members, `demo.js` seeds 20 demo members (`*_demo`, cannot log in), 41 back-dated paid orders run through the real engine, one pending order and one pending buyback, so the tree, earnings and income disclosure have data. The Income Plan labels the disclosure as **demo data**.
 - **Security:** bcrypt password hashes, server-side sessions in SQLite (httpOnly, SameSite=Lax), CSRF token on every POST, Helmet + CSP, login rate limit, input validation, money stored as integer paise, DB transactions for wallet/order changes.
 
+## Two-factor authentication (2FA)
+Standard TOTP (RFC 6238: SHA-1, 6 digits, 30-s steps, ±1 step clock tolerance) – works with **Google Authenticator, Authy, Microsoft Authenticator** and any other authenticator app.
+- **Where:** admin and managers → **Admin → Security (2FA)** (`/admin/security`); members (optional) → **Security (2FA)** (`/profile/security`).
+- **Enable:** click **Enable 2FA** → scan the QR code (or type the setup key shown below it) → enter the current 6-digit code → 2FA is switched on only after that code is correct. **10 one-time backup codes** are shown once – save them (each logs in once if the phone is lost). Other sessions of that account are signed out.
+- **Login:** after the correct password the user goes to `/login/2fa` and enters the app code (or a backup code). The step expires after 5 minutes; 5 wrong codes send the user back to the password step (plus per-IP and per-account limits). Each 30-s code works only once; the real session is created only after the code passes.
+- **Turn off:** current password + a code (app or backup). **Regenerate backup codes:** current app code.
+- **Managers:** admin setting **Require 2FA for managers** (Admin → Settings, default **on**): a manager without 2FA is sent to the Security page after login and can do nothing else until it is set up, and cannot switch it off. If a manager loses the phone and backup codes, the admin clicks **Reset 2FA** on Admin → Approval Managers (signs them out; they set it up again at next login).
+- **Storage:** the TOTP secret is encrypted at rest (AES-256-GCM, key derived from `SESSION_SECRET` via HKDF); backup codes are stored only as HMAC-SHA256 hashes. Changing `SESSION_SECRET` makes stored secrets unreadable (users then need a reset; `ADMIN_TOTP_SECRET` still works for the admin).
+- **Audit log:** 2FA enabled / disabled, backup code used, backup codes regenerated, manager 2FA reset, 2FA enforced from env, settings change.
+
+### Keeping admin 2FA on when the database resets (Render free plan) – `ADMIN_TOTP_SECRET`
+On a host without a persistent disk the DB is wiped on every restart, which would also switch 2FA off. Set env var **`ADMIN_TOTP_SECRET`** (base32, spaces/lower-case allowed) and the `admin` account gets 2FA **enforced with that secret at every startup**:
+1. Log in as `admin` → **Security (2FA)** → **Enable 2FA** → scan the QR code with the authenticator app → enter the code. Save the 10 backup codes.
+2. The page then shows the base32 secret in a yellow box. In Render → service **elitenexa** → **Environment** → add `ADMIN_TOTP_SECRET` = that value → **Save** (the service redeploys).
+3. After the redeploy, log in: password, then the 6-digit code from the same app entry. The Security page now says 2FA is enforced by the server setting (it cannot be switched off there; remove the env var to turn it off).
+Notes: backup codes live in the DB, so on the free plan they stop working after a restart – generate a new set on the Security page after a restart if you want them (or rely on the env secret, which you can always re-add to a new authenticator). Treat `ADMIN_TOTP_SECRET` like a password. If the value is invalid the server logs a warning and ignores it.
+
 ## Tests
-`python3 scripts/e2e_test.py http://127.0.0.1:3100` (Python Playwright + Chrome) runs the full flow (signup with referral + leg → order → admin marks paid → binary placement/spillover, pairs, matching, repurchase, daily cap flush, payout cap, pending → release, buyback approve/reject with clawback, plan settings + audit → manual credit/debit → withdrawal approve/reject → cancel reversal → products CRUD → settings → block/activate → Approval Manager permissions (allowed routes 200, forbidden GET/POST 403) → PayPal withdrawal approved by a manager → manager disable/reset → setup-hash tool → CSRF) and saves screenshots to `screenshots/`.
+`python3 scripts/e2e_test.py http://127.0.0.1:3100` (Python Playwright + Chrome) runs the full flow (signup with referral + leg → order → admin marks paid → binary placement/spillover, pairs, matching, repurchase, daily cap flush, payout cap, pending → release, buyback approve/reject with clawback, plan settings + audit → manual credit/debit → withdrawal approve/reject → cancel reversal → products CRUD → settings → block/activate → Approval Manager permissions (allowed routes 200, forbidden GET/POST 403) → PayPal withdrawal approved by a manager → manager disable/reset → 2FA: forced manager setup, enable flow with QR, login code step, wrong/reused codes, 5-fail lockout, expiry, backup codes once, regenerate, disable, admin reset of a manager's 2FA, require-2FA setting, optional member 2FA, `ADMIN_TOTP_SECRET` enforcement on a throw-away second server (port 3199, fresh DB) → setup-hash tool → CSRF; TOTP codes are computed independently in Python) and saves screenshots to `screenshots/`.
 
 ## Deploy
 ### Free demo on Render (Blueprint)

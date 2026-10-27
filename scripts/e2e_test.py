@@ -21,7 +21,27 @@ def uid_of(username): return sql('SELECT id FROM users WHERE lower(username)=low
 def legs_of(username):
     r = sql('SELECT l.* FROM binary_legs l JOIN users u ON u.id=l.user_id WHERE lower(u.username)=lower(?)', username)
     return r[0] if r else {'left_bv': 0, 'right_bv': 0, 'total_left': 0, 'total_right': 0, 'pairs_total': 0, 'pairs_paid': 0, 'pairs_flushed': 0}
+# ---- TOTP (RFC 6238, SHA1, 6 digits, 30 s) computed independently of the app ----
+import hmac, hashlib, base64, struct, secrets as pysecrets
+def totp_code(secret, step):
+    s = secret.upper().replace(' ', ''); s += '=' * (-len(s) % 8)
+    h = hmac.new(base64.b32decode(s), struct.pack('>Q', step), hashlib.sha1).digest()
+    o = h[-1] & 15; return f"{(struct.unpack('>I', h[o:o + 4])[0] & 0x7fffffff) % 1000000:06d}"
+_last_step = {}
+def fresh_code(secret):
+    """A valid code the server has not seen yet (the server accepts each 30-s step once, window ±1)."""
+    key = secret.replace(' ', '').upper(); now = int(time.time()) // 30; step = max(now, _last_step.get(key, -1) + 1)
+    if step > now + 1 or (step == now + 1 and time.time() % 30 > 25):
+        time.sleep(30 - time.time() % 30 + 0.6); now = int(time.time()) // 30; step = max(now, _last_step.get(key, -1) + 1)
+    _last_step[key] = step; return totp_code(key, step)
+def wrong_code(secret):
+    now = int(time.time()) // 30; valid = {totp_code(secret, now + d) for d in (-2, -1, 0, 1, 2)}
+    return next(c for c in ('000000', '111111', '222222', '333333', '444444') if c not in valid)
 def comms(where, *params): return sql('SELECT c.*, u.username ben FROM commissions c JOIN users u ON u.id=c.beneficiary_id WHERE ' + where + ' ORDER BY c.id', *params)
+
+# start every run from a known 2FA state (local DB only): admin without 2FA, "Require 2FA for managers" = default (on)
+if DBF and os.path.isfile(DBF) and not os.environ.get('ADMIN_TOTP_SECRET'):
+    sql("UPDATE users SET totp_enabled=0, totp_secret_enc=NULL, totp_last_step=0 WHERE lower(username)='admin'"); sql("DELETE FROM settings WHERE key='require_2fa_managers'")
 
 with sync_playwright() as p:
     b = p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
@@ -39,8 +59,15 @@ with sync_playwright() as p:
         except Exception:
             print('   signup failed on', pg.url, '|', pg.inner_text('main')[:300].replace('\n', ' '), '| invalid:', pg.evaluate("[...document.querySelectorAll('input')].filter(i=>!i.checkValidity()).map(i=>i.name+':'+i.validationMessage)")); raise
         return re.search(r'ref=(EN[A-Z0-9]+)', pg.inner_text('.copybox')).group(1)
-    def login(pg, ident, pw):
-        pg.goto(BASE + '/login'); pg.fill('[name=login]', ident); pg.fill('[name=password]', pw); pg.click('button:has-text("Log in")'); pg.wait_for_load_state()
+    def login(pg, ident, pw, secret=None, base=None):
+        pg.goto((base or BASE) + '/login'); pg.fill('[name=login]', ident); pg.fill('[name=password]', pw); pg.click('button:has-text("Log in")'); pg.wait_for_load_state()
+        if secret and pg.url.endswith('/login/2fa'): pg.fill('#code', fresh_code(secret)); pg.click('button:has-text("Verify")'); pg.wait_for_load_state()
+    def enable_2fa(pg, base_path):
+        """Security page -> Enable 2FA -> confirm with a valid code. Returns (secret, backup_codes)."""
+        pg.goto(BASE + base_path); pg.click('#enable-2fa'); pg.wait_for_url('**/security/setup')
+        secret = pg.inner_text('#totp-secret').replace(' ', '')
+        pg.fill('#totp_code', fresh_code(secret)); pg.click('button:has-text("Turn on 2FA")'); pg.wait_for_load_state()
+        return secret, [x.strip() for x in pg.locator('#backup-codes code').all_inner_texts()]
     def balance(pg):
         pg.goto(BASE + '/wallet'); return money(pg.inner_text('.stat.big b'))
 
@@ -169,6 +196,26 @@ with sync_playwright() as p:
     check('manager created', f'{mguid} created' in AD.inner_text('.alert') and AD.locator(f'.manager-row[data-manager="{mguid}"]').count() == 1)
     AD.goto(BASE + '/admin/members?q=' + mguid); check('manager is not listed as a member', mguid not in AD.inner_text('main'))
     MG = ctx(); MG.goto(BASE + '/admin/login'); MG.fill('[name=login]', mguid); MG.fill('[name=password]', MG_PW); MG.click('button:has-text("Log in")'); MG.wait_for_load_state()
+    # ---- 2FA: manager without 2FA is forced to set it up before anything else ("Require 2FA for managers" default on) ----
+    check('2FA: manager without 2FA forced to Security page after login', MG.url.endswith('/admin/security') and MG.locator('#required-note').count() == 1 and 'required for Approval Managers' in MG.inner_text('main'), MG.url)
+    for path in ('/admin', '/admin/orders', '/admin/withdrawals', '/products'):
+        MG.goto(BASE + path); check(f'2FA: manager without 2FA redirected from {path}', MG.url.endswith('/admin/security'), MG.url)
+    ftok = MG.locator('input[name=_csrf]').first.input_value()
+    r = MG.request.post(BASE + '/admin/orders/1/status', form={'_csrf': ftok, 'status': 'paid'}, max_redirects=0); check('2FA: manager without 2FA cannot POST admin actions (403)', r.status == 403, r.status)
+    MG.click('#enable-2fa'); MG.wait_for_url('**/security/setup')
+    check('2FA setup page shows QR (data URL) + manual key', (MG.locator('#totp-qr').get_attribute('src') or '').startswith('data:image/png;base64,') and re.fullmatch(r'[A-Z2-7]{32}', MG.inner_text('#totp-secret').replace(' ', '')) is not None)
+    MG_SECRET = MG.inner_text('#totp-secret').replace(' ', '')
+    MG.goto(BASE + '/admin'); check('2FA: setup not active until confirmed (still forced)', MG.url.endswith('/admin/security') and sql('SELECT totp_enabled FROM users WHERE id=?', uid_of(mguid))[0]['totp_enabled'] == 0)
+    MG.goto(BASE + '/admin/security/setup'); MG.fill('#totp_code', wrong_code(MG_SECRET)); MG.click('button:has-text("Turn on 2FA")'); MG.wait_for_load_state()
+    check('2FA setup: wrong confirmation code rejected', 'did not match' in MG.inner_text('#sec-error') and MG.locator('#totp-qr').count() == 1)
+    check('2FA setup: same secret kept after a wrong code', MG.inner_text('#totp-secret').replace(' ', '') == MG_SECRET)
+    MG.fill('#totp_code', fresh_code(MG_SECRET)); MG.click('button:has-text("Turn on 2FA")'); MG.wait_for_load_state()
+    MG_BACKUP = [x.strip() for x in MG.locator('#backup-codes code').all_inner_texts()]
+    check('2FA enabled for manager: 10 one-time backup codes shown once', len(MG_BACKUP) == 10 and len(set(MG_BACKUP)) == 10 and all(re.fullmatch(r'[0-9a-z]{5}-[0-9a-z]{5}', c) for c in MG_BACKUP) and MG.locator('#env-secret-note').count() == 0)
+    bc = sql('SELECT code_hash FROM backup_codes WHERE user_id=?', uid_of(mguid)); enc = sql('SELECT totp_secret_enc FROM users WHERE id=?', uid_of(mguid))[0]['totp_secret_enc']
+    check('2FA: backup codes stored hashed, secret encrypted at rest', len(bc) == 10 and all(re.fullmatch(r'[0-9a-f]{64}', r['code_hash']) for r in bc) and not any(c.replace('-', '') in json.dumps(bc) for c in MG_BACKUP) and enc.startswith('v1:') and MG_SECRET not in enc)
+    MG.goto(BASE + '/admin/security'); check('2FA: manager cannot turn 2FA off while required', MG.locator('#disable-form').count() == 0 and MG.locator('#totp-on').count() == 1)
+    MG.goto(BASE + '/admin')
     check('manager logs in at /admin/login', MG.url.endswith('/admin'), MG.url)
     side = MG.inner_text('aside.side')
     check('manager sidebar shows only allowed links', all(x in side for x in ('Dashboard', 'Orders', 'Withdrawals')) and not any(x in side for x in ('Wallet adjustments', 'Products', 'Members', 'Settings', 'Audit', 'Approval Managers', 'Messages', 'Change password')))
@@ -305,7 +352,9 @@ with sync_playwright() as p:
     mr.locator('[name=new_password]').fill(MG_PW2); mr.locator('[name=confirm_password]').fill(MG_PW2); mr.locator('button:has-text("Reset password")').click(); AD.wait_for_load_state()
     check('manager password reset', 'reset' in AD.inner_text('.alert'))
     M3 = ctx(); login(M3, mguid, MG_PW); check('old manager password rejected', '/login' in M3.url)
-    login(M3, mguid, MG_PW2); check('new manager password works', M3.url.endswith('/admin'))
+    login(M3, mguid, MG_PW2); check('2FA: manager login asks for code after password', M3.url.endswith('/login/2fa'))
+    M3.fill('#code', fresh_code(MG_SECRET)); M3.click('button:has-text("Verify")'); M3.wait_for_load_state()
+    check('new manager password works', M3.url.endswith('/admin'))
     AD.goto(BASE + '/admin/managers'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/15-admin-managers.png', full_page=True)
 
     # cancel a paid order -> its BV is removed from the tree again
@@ -539,6 +588,77 @@ with sync_playwright() as p:
     L6 = ctx(); login(L6, 'admin', ADMIN_PW); check('admin password reverted to original', L6.url.endswith('/admin'))
     AD.goto(BASE + '/admin/audit'); check('audit log records admin password change', 'admin password changed' in AD.inner_text('main').lower() or 'admin_password_changed' in AD.inner_text('main'))
 
+    # ---------- Two-factor authentication (TOTP): admin ----------
+    AD.goto(BASE + '/admin/security'); check('2FA: admin security page shows 2FA off + Enable button', AD.locator('#totp-off').count() == 1 and AD.locator('#enable-2fa').count() == 1 and 'Security (2FA)' in AD.inner_text('aside.side'))
+    AD.click('#enable-2fa'); AD.wait_for_url('**/admin/security/setup'); AD.wait_for_load_state('networkidle')
+    AD_SECRET = AD.inner_text('#totp-secret').replace(' ', '')
+    check('2FA: admin setup page (QR + key)', AD.locator('#totp-qr').is_visible() and len(AD_SECRET) == 32 and 'Google Authenticator' in AD.inner_text('#totp-setup'))
+    AD.screenshot(path=f'{SHOTS}/30-admin-2fa-setup.png', full_page=True)
+    AD.fill('#totp_code', fresh_code(AD_SECRET)); AD.click('button:has-text("Turn on 2FA")'); AD.wait_for_load_state()
+    AD_BACKUP = [x.strip() for x in AD.locator('#backup-codes code').all_inner_texts()]
+    check('2FA: admin enabled, 10 backup codes shown', 'Two-factor authentication is ON' in AD.inner_text('#totp-enabled-msg') and len(AD_BACKUP) == 10)
+    check('2FA: admin sees ADMIN_TOTP_SECRET note with the same secret', AD.locator('#env-secret-note').count() == 1 and AD.inner_text('#env-secret').strip() == AD_SECRET and 'ADMIN_TOTP_SECRET' in AD.inner_text('#env-secret-note'))
+    AD.screenshot(path=f'{SHOTS}/31-admin-2fa-backup-codes.png', full_page=True)
+    AD.goto(BASE + '/admin/security'); check('2FA: status shows on + 10 backup codes left, secret not shown again', AD.locator('#totp-on').count() == 1 and AD.inner_text('#backup-left') == '10' and AD_SECRET not in AD.content() and AD.locator('#backup-codes').count() == 0)
+    T1 = ctx(); login(T1, 'admin', ADMIN_PW); check('2FA: admin password alone -> /login/2fa step', T1.url.endswith('/login/2fa') and T1.locator('#code[autocomplete=one-time-code]').count() == 1)
+    T1.goto(BASE + '/admin'); check('2FA: no admin access before the code', T1.url.startswith(BASE + '/login'), T1.url)
+    T1.goto(BASE + '/login/2fa'); T1.fill('#code', wrong_code(AD_SECRET)); T1.click('button:has-text("Verify")'); T1.wait_for_load_state()
+    check('2FA: wrong code rejected (attempts left shown)', T1.url.endswith('/login/2fa') and 'Incorrect' in T1.inner_text('#twofa-error') and '4 attempts left' in T1.inner_text('#twofa-error'))
+    c_used = fresh_code(AD_SECRET); T1.fill('#code', c_used); T1.click('button:has-text("Verify")'); T1.wait_for_load_state()
+    check('2FA: valid code logs admin in', T1.url.endswith('/admin'), T1.url)
+    T2 = ctx(); login(T2, 'admin', ADMIN_PW); T2.fill('#code', c_used); T2.click('button:has-text("Verify")'); T2.wait_for_load_state()
+    check('2FA: reused code rejected', T2.url.endswith('/login/2fa') and 'already used' in T2.inner_text('#twofa-error'))
+    T2.fill('#code', AD_BACKUP[0].upper()); T2.click('button:has-text("Verify")'); T2.wait_for_load_state()
+    check('2FA: backup code logs in (case-insensitive) + warns', T2.url.endswith('/admin') and 'backup code' in T2.inner_text('.alert') and '9 backup codes left' in T2.inner_text('.alert'))
+    T3 = ctx(); login(T3, 'admin', ADMIN_PW); T3.fill('#code', AD_BACKUP[0]); T3.click('button:has-text("Verify")'); T3.wait_for_load_state()
+    check('2FA: backup code works only once', T3.url.endswith('/login/2fa') and 'already used' in T3.inner_text('#twofa-error'))
+    for i in range(4): T3.fill('#code', wrong_code(AD_SECRET)); T3.click('button:has-text("Verify")'); T3.wait_for_load_state()
+    check('2FA: 5 wrong codes -> back to password step', T3.url.endswith('/login/2fa') and 'Too many wrong codes' in T3.inner_text('main') and T3.locator('[name=password]').count() == 1)
+    T3.goto(BASE + '/login/2fa'); check('2FA: pending step cleared after 5 wrong codes', T3.url.endswith('/login'))
+    T4 = ctx(); login(T4, 'admin', ADMIN_PW)
+    sql("UPDATE sessions SET sess=json_set(sess,'$.pending2fa.exp',1) WHERE json_extract(sess,'$.pending2fa.uid')=?", uid_of('admin'))
+    T4.goto(BASE + '/login/2fa'); check('2FA: pending step expires (5 min)', T4.url.endswith('/login') and 'expired' in T4.inner_text('.alert'))
+    r = T4.request.post(BASE + '/login/2fa', form={'_csrf': T4.locator('input[name=_csrf]').first.input_value(), 'code': fresh_code(AD_SECRET)}, max_redirects=0)
+    check('2FA: code without a pending password step is refused', r.status == 302 and r.headers.get('location') == '/login', r.status)
+    T4.goto(BASE + '/admin'); check('2FA: still not logged in', '/login' in T4.url)
+    AD.goto(BASE + '/admin/security'); AD.fill('#regen-form [name=code]', fresh_code(AD_SECRET)); AD.click('button:has-text("Create 10 new backup codes")'); AD.wait_for_load_state()
+    AD_BACKUP2 = [x.strip() for x in AD.locator('#backup-codes code').all_inner_texts()]
+    check('2FA: new backup codes generated (old set replaced)', len(AD_BACKUP2) == 10 and not set(AD_BACKUP2) & set(AD_BACKUP) and sql('SELECT COUNT(*) n FROM backup_codes WHERE user_id=? AND used_at IS NULL', uid_of('admin'))[0]['n'] == 10)
+    T5 = ctx(); login(T5, 'admin', ADMIN_PW); T5.fill('#code', AD_BACKUP[1]); T5.click('button:has-text("Verify")'); T5.wait_for_load_state()
+    check('2FA: old backup codes invalid after regeneration', T5.url.endswith('/login/2fa'))
+    AD.goto(BASE + '/admin/security'); AD.fill('#disable-form [name=current_password]', 'wrong-password-123'); AD.fill('#disable-form [name=code]', fresh_code(AD_SECRET)); AD.click('button:has-text("Turn off 2FA")'); AD.wait_for_load_state()
+    check('2FA disable: wrong password rejected', 'Current password is incorrect' in AD.inner_text('#sec-error') and AD.locator('#totp-on').count() == 1)
+    AD.fill('#disable-form [name=current_password]', ADMIN_PW); AD.fill('#disable-form [name=code]', wrong_code(AD_SECRET)); AD.click('button:has-text("Turn off 2FA")'); AD.wait_for_load_state()
+    check('2FA disable: wrong code rejected', 'Incorrect' in AD.inner_text('#sec-error') and AD.locator('#totp-on').count() == 1)
+    AD.fill('#disable-form [name=current_password]', ADMIN_PW); AD.fill('#disable-form [name=code]', fresh_code(AD_SECRET)); AD.click('button:has-text("Turn off 2FA")'); AD.wait_for_load_state()
+    check('2FA disable: password + code turns 2FA off', 'now OFF' in AD.inner_text('.alert') and AD.locator('#totp-off').count() == 1 and sql('SELECT COUNT(*) n FROM backup_codes WHERE user_id=?', uid_of('admin'))[0]['n'] == 0)
+    T6 = ctx(); login(T6, 'admin', ADMIN_PW); check('2FA off: admin logs in with password only', T6.url.endswith('/admin'))
+    AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main')
+    check('2FA audit: enable, backup-code use, regenerate, disable', all(x in au for x in ('totp enabled', 'backup code used', 'backup codes regenerated', 'totp disabled')))
+    # ---------- 2FA: admin resets a manager's 2FA; "Require 2FA for managers" setting ----------
+    AD.goto(BASE + '/admin/managers'); mrow = AD.locator(f'.manager-row[data-manager="{mguid}"]')
+    check('managers page shows manager 2FA status', '2fa on' == mrow.locator('.twofa-pill').text_content().strip().lower())
+    mrow.locator('button:has-text("Reset 2FA")').click(); AD.wait_for_load_state()
+    check('admin resets manager 2FA', 'was reset' in AD.inner_text('.alert') and '2fa off' == AD.locator(f'.manager-row[data-manager="{mguid}"] .twofa-pill').text_content().strip().lower())
+    M3.goto(BASE + '/admin'); check('2FA reset signs the manager out', '/login' in M3.url)
+    M4 = ctx(); login(M4, mguid, MG_PW2); check('after 2FA reset: no code asked, manager forced to set up again', M4.url.endswith('/admin/security') and M4.locator('#enable-2fa').count() == 1)
+    AD.goto(BASE + '/admin/audit'); check('manager 2FA reset audit-logged', 'manager 2fa reset' in AD.inner_text('main').lower())
+    AD.goto(BASE + '/admin/settings'); check('settings: "Require 2FA for managers" on by default', AD.locator('#require_2fa_managers').is_checked())
+    AD.uncheck('#require_2fa_managers'); AD.click('button:has-text("Save settings")'); AD.wait_for_load_state()
+    M5 = ctx(); login(M5, mguid, MG_PW2); check('setting off: manager without 2FA can use the panel', M5.url.endswith('/admin') and M5.goto(BASE + '/admin/orders').status == 200 and M5.url.endswith('/admin/orders'))
+    AD.goto(BASE + '/admin/settings'); AD.check('#require_2fa_managers'); AD.click('button:has-text("Save settings")'); AD.wait_for_load_state()
+    M5.goto(BASE + '/admin/orders'); check('setting back on: manager forced to set up again', M5.url.endswith('/admin/security'))
+    AD.goto(BASE + '/admin/audit'); check('2FA setting change audit-logged', '"require_2fa_managers":false' in AD.inner_text('main'))
+    r = M5.goto(BASE + '/admin/managers'); check('manager cannot open managers page (no 2FA reset for managers)', M5.url.endswith('/admin/security'))
+    # ---------- 2FA optional for members ----------
+    A.goto(BASE + '/profile/security'); check('member security page: 2FA optional (off)', A.locator('#totp-off').count() == 1 and A.locator('#required-note').count() == 0)
+    A_SECRET, A_BACKUP = enable_2fa(A, '/profile/security')
+    check('member enables 2FA (no Render note for members)', len(A_BACKUP) == 10 and A.locator('#env-secret-note').count() == 0)
+    L8 = ctx(); login(L8, uidA, 'NewPass2026'); check('member login asks for 2FA code', L8.url.endswith('/login/2fa'))
+    L8.fill('#code', fresh_code(A_SECRET)); L8.click('button:has-text("Verify")'); L8.wait_for_load_state(); check('member logs in with code', L8.url.endswith('/dashboard'))
+    A.goto(BASE + '/profile/security'); A.fill('#disable-form [name=current_password]', 'NewPass2026'); A.fill('#disable-form [name=code]', A_BACKUP[3]); A.click('button:has-text("Turn off 2FA")'); A.wait_for_load_state()
+    check('member disables 2FA with password + backup code', A.locator('#totp-off').count() == 1)
+
     # access control
     A.goto(BASE + '/admin'); check('member cannot open admin panel', '/admin' not in A.url.replace(BASE, '')[:6] or '/login' in A.url)
     X3 = ctx(); X3.goto(BASE + '/admin/password'); check('admin change-password requires login', '/login' in X3.url)
@@ -573,6 +693,45 @@ with sync_playwright() as p:
         ver = subprocess.run(['node', '-e', 'process.stdout.write(String(require("bcryptjs").compareSync(process.argv[1], process.argv[2])))', 'HashTestPass2026', h], capture_output=True, text=True, cwd=ROOT).stdout
         check('setup-hash output verifies with bcrypt', ver == 'true', ver)
         L7 = ctx(); login(L7, 'admin', ADMIN_PW); check('setup-hash did not change admin password', L7.url.endswith('/admin'))
+    # ---------- ADMIN_TOTP_SECRET env: admin 2FA enforced at startup (survives DB resets) ----------
+    if os.environ.get('E2E_SKIP_ENV_SERVER') != '1':
+        import tempfile, urllib.request, signal
+        ENV_PORT = 3199; ENV_BASE = f'http://127.0.0.1:{ENV_PORT}'; ENV_PW = 'EnvAdminPass-' + run + 'Zz'
+        ENV_SECRET = base64.b32encode(pysecrets.token_bytes(20)).decode().rstrip('=')
+        def start_env_server(totp_value, data_dir):
+            env = {**os.environ, 'PORT': str(ENV_PORT), 'HOST': '127.0.0.1', 'DATA_DIR': data_dir, 'ADMIN_PASSWORD': ENV_PW, 'SESSION_SECRET': 'e2e-' + run * 4, 'ADMIN_TOTP_SECRET': totp_value, 'DEMO_MODE': '0'}
+            for k in ('ADMIN_PASSWORD_HASH', 'ADMIN_SETUP_TOKEN'): env.pop(k, None)
+            pr = subprocess.Popen(['node', 'server.js'], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for _ in range(100):
+                try: urllib.request.urlopen(ENV_BASE + '/healthz', timeout=1); break
+                except Exception: time.sleep(0.15)
+            return pr
+        def stop(pr):
+            pr.send_signal(signal.SIGTERM); out = pr.communicate(timeout=10)[0]; return out
+        d1 = tempfile.mkdtemp(prefix='enx-totp-')
+        # lower-case with spaces: the server normalizes the base32 value
+        pretty = ' '.join(ENV_SECRET[i:i + 4] for i in range(0, len(ENV_SECRET), 4)).lower()
+        srv = start_env_server(pretty, d1)
+        E1 = ctx(); login(E1, 'admin', ENV_PW, base=ENV_BASE); check('ADMIN_TOTP_SECRET: fresh DB, admin login asks for code', E1.url.endswith('/login/2fa'), E1.url)
+        E1.fill('#code', wrong_code(ENV_SECRET)); E1.click('button:has-text("Verify")'); E1.wait_for_load_state(); check('ADMIN_TOTP_SECRET: wrong code rejected', 'Incorrect' in E1.inner_text('#twofa-error'))
+        E1.fill('#code', fresh_code(ENV_SECRET)); E1.click('button:has-text("Verify")'); E1.wait_for_load_state(); check('ADMIN_TOTP_SECRET: code from env secret logs in', E1.url.endswith('/admin'), E1.url)
+        E1.goto(ENV_BASE + '/admin/security')
+        check('ADMIN_TOTP_SECRET: security page says enforced by server setting, no disable form', E1.locator('#env-enforced-note').count() == 1 and E1.locator('#disable-form').count() == 0 and E1.locator('#totp-on').count() == 1)
+        etok = E1.locator('input[name=_csrf]').first.input_value()
+        r = E1.request.post(ENV_BASE + '/admin/security/disable', form={'_csrf': etok, 'current_password': ENV_PW, 'code': fresh_code(ENV_SECRET)}, max_redirects=0)
+        E1.goto(ENV_BASE + '/admin/security'); check('ADMIN_TOTP_SECRET: disabling is refused', r.status == 400 and E1.locator('#totp-on').count() == 1, r.status)
+        E1.fill('#regen-form [name=code]', fresh_code(ENV_SECRET)); E1.click('button:has-text("Create 10 new backup codes")'); E1.wait_for_load_state()
+        check('ADMIN_TOTP_SECRET: backup codes can be generated', E1.locator('#backup-codes code').count() == 10 and E1.locator('#env-secret-note').count() == 0)
+        E1.goto(ENV_BASE + '/admin/audit'); check('ADMIN_TOTP_SECRET: enforcement audit-logged', 'totp enforced from env' in E1.inner_text('main'))
+        out1 = stop(srv)
+        check('ADMIN_TOTP_SECRET value never logged', ENV_SECRET not in out1.upper().replace(' ', '') and 'enforced from ADMIN_TOTP_SECRET' in out1, out1[-200:])
+        d2 = tempfile.mkdtemp(prefix='enx-totp-'); srv = start_env_server(ENV_SECRET, d2)  # restart with an EMPTY DB (like Render free)
+        E2 = ctx(); login(E2, 'admin', ENV_PW, base=ENV_BASE); check('ADMIN_TOTP_SECRET: after DB reset 2FA still enforced', E2.url.endswith('/login/2fa'))
+        E2.fill('#code', fresh_code(ENV_SECRET)); E2.click('button:has-text("Verify")'); E2.wait_for_load_state(); check('ADMIN_TOTP_SECRET: same authenticator works after reset', E2.url.endswith('/admin'))
+        stop(srv)
+        d3 = tempfile.mkdtemp(prefix='enx-totp-'); srv = start_env_server('not-base32!!', d3)
+        E3 = ctx(); login(E3, 'admin', ENV_PW, base=ENV_BASE); out3 = stop(srv)
+        check('invalid ADMIN_TOTP_SECRET ignored with a warning', E3.url.endswith('/admin') and 'not a valid base32 secret' in out3)
     allerrs = sum([x.errs for x in (pub, A, B, C, AD, MG, V, D, R, *M.values())], [])
     check('no JS page errors', not allerrs, str(allerrs[:3]))
     b.close()

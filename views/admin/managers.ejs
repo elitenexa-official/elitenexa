@@ -19,9 +19,10 @@
     <% managers.forEach(mg => { %>
       <div class="manager-row" data-manager="<%= mg.username %>">
         <div class="section-head"><div><b><%= mg.name %></b> <span class="muted small">· <%= mg.username %> · since <%= fmtDate(mg.created_at) %></span></div>
-          <span class="pill <%= mg.status==='active'?'paid':'cancelled' %>"><%= mg.status==='active' ? 'active' : 'disabled' %></span></div>
+          <span><span class="pill <%= mg.totp_enabled?'paid':'pending' %> twofa-pill"><%= mg.totp_enabled ? '2FA on' : '2FA off' %></span> <span class="pill <%= mg.status==='active'?'paid':'cancelled' %>"><%= mg.status==='active' ? 'active' : 'disabled' %></span></span></div>
         <form method="post" action="/admin/managers/<%= mg.id %>/status" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>">
           <input type="hidden" name="status" value="<%= mg.status==='active'?'blocked':'active' %>"><button class="btn btn-sm <%= mg.status==='active'?'btn-outline':'btn-gold' %>"><%= mg.status==='active'?'Disable':'Enable' %></button></form>
+        <% if (mg.totp_enabled) { %><form method="post" action="/admin/managers/<%= mg.id %>/2fa-reset" class="inline confirm"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-danger">Reset 2FA</button></form><% } %>
         <details class="small"><summary>Reset password</summary>
           <form method="post" action="/admin/managers/<%= mg.id %>/password" class="form reset-form">
             <input type="hidden" name="_csrf" value="<%= csrf %>">

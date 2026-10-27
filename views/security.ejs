@@ -1,0 +1,84 @@
+<%- include('partials/header') %>
+<div class="page-title"><div><h1>Security (2FA)</h1><p class="muted small">Two-factor authentication: after your password, login also asks for a 6-digit code from an authenticator app on your phone.</p></div></div>
+<% if (error) { %><div class="alert alert-err" id="sec-error"><%= error %></div><% } %>
+
+<% if (mode === 'setup') { %>
+  <div class="card form narrow-form" id="totp-setup">
+    <h3>Step 1 – Scan this QR code</h3>
+    <p class="small">Open <b>Google Authenticator</b>, <b>Authy</b> or <b>Microsoft Authenticator</b> on your phone, tap <b>+</b> / <b>Add account</b> → <b>Scan a QR code</b>, and scan:</p>
+    <p class="center"><img id="totp-qr" src="<%= qr %>" alt="QR code for your authenticator app" width="240" height="240" style="background:#fff;padding:8px;border-radius:10px"></p>
+    <p class="small">Can't scan? Choose <b>Enter a setup key</b> and type this key (time-based, account <b>EliteNexa: <%= user.username %></b>):</p>
+    <code id="totp-secret" class="hashbox" tabindex="0"><%= secretGrouped %></code>
+    <h3 style="margin-top:20px">Step 2 – Confirm with a code</h3>
+    <form method="post" action="<%= base %>/confirm" id="totp-confirm-form">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label for="totp_code">6-digit code shown in the app<input id="totp_code" name="code" required inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" placeholder="123456"></label>
+      <button class="btn btn-gold">Turn on 2FA</button>
+      <a class="btn btn-outline" href="<%= base %>">Cancel</a>
+    </form>
+    <p class="small muted">2FA is switched on only after a correct code. This setup page expires after 15 minutes.</p>
+  </div>
+
+<% } else if (mode === 'enabled') { %>
+  <div class="card form narrow-form" id="backup-codes-card">
+    <% if (typeof regenerated !== 'undefined' && regenerated) { %>
+      <div class="alert alert-ok">New backup codes created. Your old backup codes no longer work.</div>
+    <% } else { %>
+      <div class="alert alert-ok" id="totp-enabled-msg">Two-factor authentication is ON. From now on, login asks for a code from your authenticator app.</div>
+    <% } %>
+    <h3>Your 10 one-time backup codes</h3>
+    <p class="small">If you lose your phone, each of these codes lets you log in <b>once</b> instead of the 6-digit code. <b>Save them now</b> (password manager or printed paper in a safe place). They are shown only this one time.</p>
+    <ol class="backup-codes" id="backup-codes" style="columns:2;font-family:ui-monospace,Menlo,monospace;font-size:1.05rem;line-height:1.9">
+      <% codes.forEach(c => { %><li><code><%= c %></code></li><% }) %>
+    </ol>
+    <% if (envSecret) { %>
+      <div class="alert alert-warn" id="env-secret-note">
+        <b>Important for the hosted site (Render free plan):</b> the database is wiped whenever the server restarts, which would switch 2FA off again.
+        To keep 2FA on permanently, open Render → <b>elitenexa</b> → <b>Environment</b>, add a variable named <code>ADMIN_TOTP_SECRET</code> with this value, and save:
+        <code id="env-secret" class="hashbox" tabindex="0"><%= envSecret %></code>
+        It is the same key your authenticator app now has, so your codes keep working after every restart. Keep it secret – anyone with this key can generate your codes.
+        Backup codes are stored in the database, so on the free plan they stop working after a restart; generate new ones on this page when needed.
+      </div>
+    <% } %>
+    <a class="btn btn-gold" href="<%= base %>">I have saved my backup codes</a>
+  </div>
+
+<% } else { %>
+  <div class="grid2">
+    <div class="card" id="totp-status">
+      <h3>Status: <% if (row.totp_enabled) { %><span class="pill paid" id="totp-on">2FA on</span><% } else { %><span class="pill cancelled" id="totp-off">2FA off</span><% } %></h3>
+      <% if (row.totp_enabled) { %>
+        <p class="small">Enabled <%= row.totp_enabled_at ? 'on ' + fmtDate(row.totp_enabled_at) : '' %>. Unused backup codes: <b id="backup-left"><%= left %></b> of 10.</p>
+        <% if (envEnforced) { %><div class="alert alert-warn small" id="env-enforced-note">2FA for this admin account is set by the server setting <code>ADMIN_TOTP_SECRET</code>, so it stays on after restarts. To change or remove it, edit that setting on the hosting dashboard (Render → Environment).</div><% } %>
+        <% if (required && !envEnforced) { %><p class="small muted" id="required-note">2FA is required for Approval Managers. If you lose your phone, use a backup code or ask the admin to reset your 2FA.</p><% } %>
+      <% } else { %>
+        <p class="small">Protect your account: even if someone learns your password, they cannot log in without your phone.</p>
+        <% if (required) { %><div class="alert alert-warn small" id="required-note">2FA is required for your account. Set it up now to continue.</div><% } %>
+        <form method="post" action="<%= base %>/start"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-gold" id="enable-2fa">Enable 2FA</button></form>
+        <p class="small muted">You need a free authenticator app: Google Authenticator, Authy or Microsoft Authenticator.</p>
+      <% } %>
+    </div>
+    <% if (row.totp_enabled) { %>
+      <div>
+        <form method="post" action="<%= base %>/backup-codes" class="card form" id="regen-form">
+          <h3>New backup codes</h3>
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <label>Current 6-digit code from your app<input name="code" required inputmode="numeric" maxlength="7" autocomplete="one-time-code"></label>
+          <button class="btn btn-outline">Create 10 new backup codes</button>
+          <p class="small muted">Old backup codes stop working.</p>
+        </form>
+        <% if (!envEnforced && !required) { %>
+        <form method="post" action="<%= base %>/disable" class="card form" id="disable-form">
+          <h3>Turn off 2FA</h3>
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <input type="text" name="username" value="<%= user.username %>" autocomplete="username" readonly hidden aria-hidden="true">
+          <label>Current password<input type="password" name="current_password" required autocomplete="current-password"></label>
+          <label>6-digit code (or a backup code)<input name="code" required maxlength="20" autocomplete="one-time-code"></label>
+          <button class="btn btn-danger">Turn off 2FA</button>
+        </form>
+        <% } %>
+      </div>
+    <% } %>
+  </div>
+<% } %>
+<%- include('partials/footer') %>

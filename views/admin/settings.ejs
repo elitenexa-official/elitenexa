@@ -8,6 +8,8 @@
     <label>Sponsor-team depth shown on "My team"<input type="number" name="team_depth" min="1" max="20" value="<%= s.team_depth %>"></label>
     <label>Minimum withdrawal (₹)<input type="number" name="min_withdrawal_rupees" min="0" value="<%= s.min_withdrawal_rupees %>"></label>
   </div>
+  <h3>Security</h3>
+  <label class="check"><input type="checkbox" name="require_2fa_managers" id="require_2fa_managers" value="1"<%= s.require_2fa_managers ? ' checked' : '' %>> Require 2FA for Approval Managers (they must set up an authenticator app at login before they can use the panel)</label>
   <h3>Grievance Officer (shown on the public Grievance page)</h3>
   <label>Name<input name="g_name" required maxlength="120" value="<%= s.grievance.name %>"></label>
   <div class="row2">
@@ -18,6 +20,7 @@
   <p class="small muted">Changes are logged in the audit log. The compensation plan (pairs, matching, repurchase, caps, ranks) is on <a href="/admin/plan">Plan settings</a>.</p>
   <button class="btn btn-gold">Save settings</button>
 </form>
-<div class="card"><h3>Admin password</h3><p class="small muted">Change the admin login password on its own page.</p><a class="btn btn-outline" href="/admin/password">Change password</a></div>
+<div><div class="card"><h3>Admin password</h3><p class="small muted">Change the admin login password on its own page.</p><a class="btn btn-outline" href="/admin/password">Change password</a></div>
+<div class="card"><h3>Two-factor authentication</h3><p class="small muted">Protect the admin login with a code from an authenticator app.</p><a class="btn btn-outline" href="/admin/security">Security (2FA)</a></div></div>
 </div>
 <%- include('../partials/footer') %>

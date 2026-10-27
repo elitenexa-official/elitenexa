@@ -1,0 +1,15 @@
+<%- include('partials/header') %>
+<section class="wrap auth">
+  <form method="post" action="/login/2fa" class="card form" id="twofa-form" autocomplete="off">
+    <img class="auth-logo" src="/brand/mark_256.png" alt="EliteNexa" width="72" height="72">
+    <h1>Two-factor check</h1>
+    <p class="tagline">Open your authenticator app (Google Authenticator, Authy, Microsoft Authenticator) and enter the 6-digit code for EliteNexa.</p>
+    <% if (error) { %><div class="alert alert-err" id="twofa-error"><%= error %></div><% } %>
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <label for="code">6-digit code or backup code<input id="code" name="code" required maxlength="20" autocomplete="one-time-code" inputmode="text" autocapitalize="none" spellcheck="false" autofocus placeholder="123456"></label>
+    <button class="btn btn-gold btn-block">Verify</button>
+    <p class="small muted center">Lost your phone? Type one of your one-time backup codes (like <code>abcde-12345</code>) instead. Each backup code works once. This step expires 5 minutes after you entered your password.</p>
+    <p class="small center"><a href="/login">← Start again</a></p>
+  </form>
+</section>
+<%- include('partials/footer') %>
