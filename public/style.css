@@ -153,3 +153,8 @@ input:disabled{opacity:.6}
 .demo-close{background:none;border:0;color:inherit;font-size:1.3rem;line-height:1;cursor:pointer;padding:0 4px;opacity:.8}
 .demo-close:hover{opacity:1}
 .hashbox{display:block;word-break:break-all;user-select:all;padding:12px 14px;border-radius:10px;background:#0f0e0e;border:1px solid rgba(212,175,55,.45);color:#f3e3a6;font-size:.9rem}
+.manager-row{padding:12px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+.manager-row:last-child{border-bottom:0}
+.manager-row details{margin-top:8px}
+.reset-form{max-width:360px;margin-top:8px}
+.wdform label{display:block;margin-bottom:4px}

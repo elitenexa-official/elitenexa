@@ -7,9 +7,15 @@
     <input type="hidden" name="_csrf" value="<%= csrf %>">
     <div class="row2">
       <label>Amount (₹)<input type="number" name="amount" min="<%= s.min_withdrawal_rupees %>" step="0.01" required></label>
-      <label>UPI ID / bank details<input name="payout_details" required maxlength="300" placeholder="name@upi or A/c + IFSC"></label>
+      <label>Payout method<select name="payout_method" id="payout_method"><option value="bank_upi">Bank / UPI</option><option value="paypal">PayPal</option></select></label>
     </div>
-    <p class="small muted">Minimum <%= inr(s.min_withdrawal_rupees*100) %>. The amount is put on hold and paid to your own account after review. Transfers to other members are not possible.</p>
+    <div class="row2">
+      <label class="pm-bank">UPI ID / bank details<input name="payout_details" maxlength="300" placeholder="name@upi or A/c + IFSC"></label>
+      <label class="pm-paypal">PayPal email<input type="email" name="paypal_email" maxlength="200" placeholder="you@example.com" autocomplete="email"></label>
+      <label>Country<select name="country" id="payout_country"><% PAYOUT_COUNTRIES.forEach(c => { %><option<%= c==='India' ? ' selected' : '' %>><%= c %></option><% }) %></select></label>
+    </div>
+    <p class="small muted">Minimum <%= inr(s.min_withdrawal_rupees*100) %>. The amount is put on hold and paid to <b>your own</b> bank/UPI or PayPal account after review. Transfers to other members are not possible.</p>
+    <p class="small muted pm-paypal" id="paypal-fee-note">International PayPal payouts may include PayPal fees and currency conversion, so the amount you receive can be lower than the amount requested.</p>
     <button class="btn btn-gold">Submit request</button>
   </form>
 </div>
@@ -20,8 +26,8 @@
 <div class="card">
   <h3>Withdrawal requests</h3>
   <% if (!withdrawals.length) { %><p class="muted small">No requests yet.</p><% } else { %>
-  <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th class="r">Amount</th><th>Status</th><th>Note</th></tr></thead><tbody>
-  <% withdrawals.forEach(w => { %><tr><td><%= w.id %></td><td class="small"><%= fmtDate(w.created_at) %></td><td class="r"><%= inr(w.amount_paise) %></td><td><span class="pill <%= w.status==='approved'?'paid':w.status==='rejected'?'cancelled':'pending' %>"><%= w.status %></span></td><td class="small"><%= w.admin_note || '' %></td></tr><% }) %>
+  <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Date</th><th class="r">Amount</th><th>Method</th><th>Status</th><th>Note</th></tr></thead><tbody>
+  <% withdrawals.forEach(w => { %><tr><td><%= w.id %></td><td class="small"><%= fmtDate(w.created_at) %></td><td class="r"><%= inr(w.amount_paise) %></td><td class="small"><%= w.payout_method==='paypal' ? 'PayPal (' + w.paypal_email + ')' : 'Bank / UPI' %> · <%= w.country %></td><td><span class="pill <%= w.status==='approved'?'paid':w.status==='rejected'?'cancelled':'pending' %>"><%= w.status %></span></td><td class="small"><%= w.admin_note || '' %></td></tr><% }) %>
   </tbody></table></div><% } %>
 </div>
 <%- include('../partials/footer') %>

@@ -1,0 +1,38 @@
+<%- include('../partials/header') %>
+<div class="page-title"><div><h1>Approval Managers</h1><p class="muted small">Staff accounts (not members) who can only review orders and withdrawal requests.</p></div></div>
+<div class="card note small">An Approval Manager can: view the dashboard summary, mark pending orders <b>paid</b> or <b>cancelled</b>, and approve (with the payment reference) or reject withdrawal requests. They <b>cannot</b> make manual wallet credits/debits, edit products, members or settings, manage managers or open the audit log. They log in at <a href="/admin/login">/admin/login</a>. Every action they take is recorded in the audit log under their User ID.</div>
+<div class="grid2">
+  <form method="post" action="/admin/managers" class="card form" id="new-manager-form">
+    <h3>Add Approval Manager</h3>
+    <% if (error) { %><div class="alert alert-err"><%= error %></div><% } %>
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <label for="mg_name">Full name<input id="mg_name" name="name" required maxlength="100" value="<%= form.name || '' %>" autocomplete="off"></label>
+    <label for="mg_username">User ID <span class="muted small">(4–20 letters, numbers or _)</span><input id="mg_username" name="username" required minlength="4" maxlength="20" pattern="[A-Za-z0-9_]{4,20}" value="<%= form.username || '' %>" autocomplete="username"></label>
+    <label for="mg_new_password">Password <span class="muted small">(min 12 characters)</span><input type="password" id="mg_new_password" name="new_password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+    <label for="mg_confirm_password">Confirm password<input type="password" id="mg_confirm_password" name="confirm_password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+    <p class="small muted">You set the password; share it with the manager privately (never in a group chat).</p>
+    <button type="submit" class="btn btn-gold">Create manager</button>
+  </form>
+  <div class="card">
+    <h3>Managers</h3>
+    <% if (!managers.length) { %><p class="muted small">No Approval Managers yet.</p><% } %>
+    <% managers.forEach(mg => { %>
+      <div class="manager-row" data-manager="<%= mg.username %>">
+        <div class="section-head"><div><b><%= mg.name %></b> <span class="muted small">· <%= mg.username %> · since <%= fmtDate(mg.created_at) %></span></div>
+          <span class="pill <%= mg.status==='active'?'paid':'cancelled' %>"><%= mg.status==='active' ? 'active' : 'disabled' %></span></div>
+        <form method="post" action="/admin/managers/<%= mg.id %>/status" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>">
+          <input type="hidden" name="status" value="<%= mg.status==='active'?'blocked':'active' %>"><button class="btn btn-sm <%= mg.status==='active'?'btn-outline':'btn-gold' %>"><%= mg.status==='active'?'Disable':'Enable' %></button></form>
+        <details class="small"><summary>Reset password</summary>
+          <form method="post" action="/admin/managers/<%= mg.id %>/password" class="form reset-form">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <input type="text" name="username" value="<%= mg.username %>" autocomplete="username" readonly hidden aria-hidden="true">
+            <label>New password<input type="password" name="new_password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+            <label>Confirm new password<input type="password" name="confirm_password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+            <button class="btn btn-sm btn-gold">Reset password</button>
+          </form>
+        </details>
+      </div>
+    <% }) %>
+  </div>
+</div>
+<%- include('../partials/footer') %>

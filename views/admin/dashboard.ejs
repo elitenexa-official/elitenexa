@@ -14,10 +14,11 @@
     <div class="table-wrap"><table class="table"><thead><tr><th>#</th><th>Member</th><th class="r">Total</th><th>Status</th></tr></thead><tbody>
     <% recentOrders.forEach(o => { %><tr><td><%= o.id %></td><td><%= o.member %></td><td class="r"><%= inr(o.total_paise) %></td><td><span class="pill <%= o.status %>"><%= o.status %></span></td></tr><% }) %>
     </tbody></table></div></div>
-  <div class="card"><div class="section-head"><h3>Recent admin actions</h3><a class="link small" href="/admin/audit">Audit log →</a></div>
+  <% if (!isManager) { %><div class="card"><div class="section-head"><h3>Recent admin actions</h3><a class="link small" href="/admin/audit">Audit log →</a></div>
     <div class="table-wrap"><table class="table"><tbody>
     <% recentAudit.forEach(l => { %><tr><td class="small nowrap"><%= fmtDate(l.created_at) %></td><td><b><%= l.action.replace(/_/g,' ') %></b><% if (l.target) { %> · <%= l.target %><% } %><br><span class="small muted"><%= (l.details||'').slice(0,120) %></span></td></tr><% }) %>
-    </tbody></table></div></div>
+    </tbody></table></div></div><% } else { %>
+  <div class="card"><h3>Your tasks</h3><p class="small">As an <b>Approval Manager</b> you can review <a href="/admin/orders?status=pending">pending orders</a> (mark paid / cancelled) and <a href="/admin/withdrawals">withdrawal requests</a> (approve with the payment reference, or reject). Every action is recorded in the audit log under your User ID.</p></div><% } %>
 </div>
-<div class="card note small">Payouts: approved withdrawals are paid outside this system (bank transfer/UPI). Integrate a proper payment gateway such as Razorpay Payouts later. Member-to-member transfers are intentionally not supported (would require an RBI licence).</div>
+<div class="card note small">Payouts: approved withdrawals are paid outside this system (bank transfer/UPI or PayPal). Integrate a proper payment gateway such as Razorpay Payouts later. Member-to-member transfers are intentionally not supported (would require an RBI licence).</div>
 <%- include('../partials/footer') %>

@@ -22,7 +22,7 @@
 <meta name="twitter:card" content="summary_large_image">
 </head>
 <%
-  const isAdmin = path.startsWith('/admin') && !!user && user.role === 'admin';
+  const isAdmin = path.startsWith('/admin') && isStaff;
   const memberPaths = ['/dashboard','/profile','/shop','/orders','/team','/wallet'];
   const isMember = !!user && memberPaths.some(p => path === p || path.startsWith(p + '/'));
   const shell = isAdmin ? 'admin' : (isMember ? 'member' : 'public');
@@ -39,7 +39,7 @@
       <a href="/about" class="<%= path==='/about'?'on':'' %>">About</a>
       <a href="/contact" class="<%= path==='/contact'?'on':'' %>">Contact</a>
       <% if (user) { %>
-        <a class="btn btn-sm btn-ghost" href="<%= user.role==='admin' ? '/admin' : '/dashboard' %>"><%= user.role==='admin' ? 'Admin panel' : 'My dashboard' %></a>
+        <a class="btn btn-sm btn-ghost" href="<%= isStaff ? '/admin' : '/dashboard' %>"><%= isManager ? 'Manager panel' : (isStaff ? 'Admin panel' : 'My dashboard') %></a>
         <form method="post" action="/logout" class="inline"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-sm btn-outline">Log out</button></form>
       <% } else { %>
         <a class="btn btn-sm btn-ghost" href="/login">Log in</a>
@@ -52,8 +52,11 @@
 <div class="app wrap">
   <aside class="side">
     <% if (shell === 'admin') { %>
-      <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>EliteNexa</b><small>Admin panel · <%= user.username %></small></div></div>
-      <% [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']].forEach(([h,l]) => { %>
+      <div class="side-brand"><img src="/brand/mark_256.png" alt="" width="40" height="40"><div><b>EliteNexa</b><small><%= isManager ? 'Approval Manager' : 'Admin panel' %> · <%= user.username %></small></div></div>
+      <% (isManager
+          ? [['/admin','Dashboard'],['/admin/orders','Orders'],['/admin/withdrawals','Withdrawals']]
+          : [['/admin','Dashboard'],['/admin/members','Members'],['/admin/products','Products'],['/admin/orders','Orders'],['/admin/wallet','Wallet adjustments'],['/admin/withdrawals','Withdrawals'],['/admin/managers','Approval Managers'],['/admin/settings','Settings'],['/admin/password','Change password'],['/admin/audit','Audit log'],['/admin/messages','Messages']]
+        ).forEach(([h,l]) => { %>
         <a href="<%= h %>" class="<%= (path===h || (h!=='/admin' && path.startsWith(h))) ? 'on' : '' %>"><%= l %></a>
       <% }) %>
     <% } else { %>

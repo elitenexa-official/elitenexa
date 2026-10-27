@@ -34,3 +34,16 @@ document.addEventListener('input', function (e) {
     try { sessionStorage.setItem('enx-demo-banner-dismissed', '1'); } catch (_) {}
   });
 })();
+// Withdrawal form: show the fields for the chosen payout method
+(function () {
+  var sel = document.getElementById('payout_method'); if (!sel) return;
+  var f = sel.form;
+  function sync() {
+    var pp = sel.value === 'paypal';
+    f.querySelectorAll('.pm-paypal').forEach(function (el) { el.style.display = pp ? '' : 'none'; });
+    f.querySelectorAll('.pm-bank').forEach(function (el) { el.style.display = pp ? 'none' : ''; });
+    f.querySelector('[name=paypal_email]').required = pp;
+    f.querySelector('[name=payout_details]').required = !pp;
+  }
+  sel.addEventListener('change', sync); sync();
+})();

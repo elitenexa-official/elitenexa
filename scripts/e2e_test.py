@@ -136,7 +136,7 @@ with sync_playwright() as p:
     A.fill('[name=amount]', '500'); A.fill('[name=payout_details]', 'asha@upi'); A.click('button:has-text("Submit request")')
     check('withdrawal request submitted + held', 'submitted' in A.inner_text('.alert') and abs(balance(A) - (exp - 500)) < 0.01)
     AD.goto(BASE + '/admin/withdrawals'); row = AD.locator('tr', has_text='asha@upi').first
-    row.locator('[name=note]').fill('UTR123456789'); row.locator('button[value=approve]').click(); AD.wait_for_load_state()
+    row.locator('[name=reference]').fill('UTR123456789'); row.locator('button[value=approve]').click(); AD.wait_for_load_state()
     check('admin approved withdrawal', 'approved' in AD.inner_text('.alert'))
     A.goto(BASE + '/wallet'); check('member sees approved withdrawal', 'UTR123456789' in A.inner_text('main'))
 
@@ -144,8 +144,81 @@ with sync_playwright() as p:
     AD.goto(BASE + f'/admin/wallet?member={bid}'); AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '300'); AD.fill('[name=reason]', 'Test credit for withdrawal rejection flow'); AD.click('button:has-text("Apply adjustment")')
     before = balance(B); B.fill('[name=amount]', '500'); B.fill('[name=payout_details]', 'ravi@upi'); B.click('button:has-text("Submit request")')
     AD.goto(BASE + '/admin/withdrawals'); row = AD.locator('tr', has_text='ravi@upi').first
-    row.locator('[name=note]').fill('KYC pending – please upload PAN'); row.locator('button[value=reject]').click(); AD.wait_for_load_state()
+    row.locator('[name=reason]').fill('KYC pending – please upload PAN'); row.locator('button[value=reject]').click(); AD.wait_for_load_state()
     check('rejected withdrawal returns funds', abs(balance(B) - before) < 0.01, f'{balance(B)}')
+
+    # ---------- Approval Manager: create, permissions, actions ----------
+    MG_PW = 'MgrPass-' + run + 'xyZ9'; MG_PW2 = 'MgrPass2-' + run + 'abQ7'; mguid = f'mgr{run}'
+    AD.goto(BASE + '/admin/managers')
+    check('managers page: password fields are new-password', all(AD.locator(f'#new-manager-form [name={n}][type=password][autocomplete=new-password]').count() == 1 for n in ('new_password', 'confirm_password')))
+    AD.fill('#mg_name', 'Priya Manager'); AD.fill('#mg_username', mguid); AD.fill('#mg_new_password', MG_PW); AD.fill('#mg_confirm_password', MG_PW + 'x')
+    AD.evaluate("document.getElementById('mg_confirm_password').setCustomValidity('')"); AD.click('button:has-text("Create manager")')
+    check('manager create: mismatch rejected', 'do not match' in AD.inner_text('main'))
+    AD.fill('#mg_new_password', MG_PW); AD.fill('#mg_confirm_password', MG_PW); AD.click('button:has-text("Create manager")'); AD.wait_for_load_state()
+    check('manager created', f'{mguid} created' in AD.inner_text('.alert') and AD.locator(f'.manager-row[data-manager="{mguid}"]').count() == 1)
+    AD.goto(BASE + '/admin/members?q=' + mguid); check('manager is not listed as a member', mguid not in AD.inner_text('main'))
+    MG = ctx(); MG.goto(BASE + '/admin/login'); MG.fill('[name=login]', mguid); MG.fill('[name=password]', MG_PW); MG.click('button:has-text("Log in")'); MG.wait_for_load_state()
+    check('manager logs in at /admin/login', MG.url.endswith('/admin'), MG.url)
+    side = MG.inner_text('aside.side')
+    check('manager sidebar shows only allowed links', all(x in side for x in ('Dashboard', 'Orders', 'Withdrawals')) and not any(x in side for x in ('Wallet adjustments', 'Products', 'Members', 'Settings', 'Audit', 'Approval Managers', 'Messages', 'Change password')))
+    for path in ('/admin', '/admin/orders', '/admin/orders?status=pending', '/admin/withdrawals'):
+        r = MG.goto(BASE + path); check(f'manager allowed GET {path}', r.status == 200 and '/login' not in MG.url, r.status)
+    for path in ('/admin/wallet', '/admin/products', '/admin/products/new', '/admin/products/1/edit', '/admin/members', '/admin/settings', '/admin/managers', '/admin/audit', '/admin/messages', '/admin/password'):
+        r = MG.goto(BASE + path); check(f'manager forbidden GET {path} -> 403', r.status == 403, r.status)
+    MG.goto(BASE + '/admin'); mtok = MG.locator('input[name=_csrf]').first.input_value()
+    for path, data in (('/admin/wallet/adjust', {'user_id': '1', 'type': 'credit', 'amount': '100', 'reason': 'manager should not do this'}),
+                       ('/admin/products/save', {'name': 'Hack', 'price': '1', 'stock': '1'}), ('/admin/products/1/delete', {}),
+                       ('/admin/members/1/status', {'status': 'blocked'}), ('/admin/settings', {'commission_levels': '50'}),
+                       ('/admin/managers', {'name': 'X', 'username': 'mgrhack1', 'new_password': 'x' * 14, 'confirm_password': 'x' * 14}),
+                       ('/admin/password', {'current_password': MG_PW, 'new_password': 'y' * 14, 'confirm_password': 'y' * 14})):
+        r = MG.request.post(BASE + path, form={'_csrf': mtok, **data}, max_redirects=0); check(f'manager forbidden POST {path} -> 403', r.status == 403, r.status)
+    MG.goto(BASE + '/admin'); check('manager dashboard hides audit section', 'Recent admin actions' not in MG.inner_text('main') and 'Approval Manager' in MG.inner_text('main'))
+
+    # manager marks a new pending order paid (C orders again)
+    C.goto(BASE + '/shop'); f = C.locator('form.product').first; f.locator('[name=qty]').fill('1'); f.locator('[name=address]').fill('12 MG Road, Pune 411001'); f.locator('button').click()
+    C.wait_for_url('**/orders'); oid2 = re.search(r'Order #(\d+) placed', C.inner_text('main')).group(1)
+    MG.goto(BASE + '/admin/orders?status=pending'); check('manager sees no "Mark delivered" buttons', MG.locator('input[name=status][value=delivered]').count() == 0)
+    MG.locator(f'form[action="/admin/orders/{oid2}/status"]:has(input[name=status][value=paid]) button').click(); MG.wait_for_load_state()
+    check('manager marks order paid (commission credited)', f'Order #{oid2} marked paid' in MG.inner_text('.alert'), MG.inner_text('.alert')[:120])
+    r = MG.request.post(BASE + f'/admin/orders/{oid2}/status', form={'_csrf': mtok, 'status': 'delivered'}, max_redirects=0)
+    MG.goto(BASE + '/admin/orders'); check('manager cannot mark delivered', 'only mark orders paid or cancelled' in MG.inner_text('main'))
+
+    # ---------- PayPal withdrawal (C, South Africa) approved by manager ----------
+    AD.goto(BASE + '/admin/members?q=' + codeC); cid = re.search(r'member=(\d+)', AD.locator('a[href*="/admin/wallet?member="]').first.get_attribute('href')).group(1)
+    AD.goto(BASE + f'/admin/wallet?member={cid}'); AD.select_option('[name=type]', 'credit'); AD.fill('[name=amount]', '800'); AD.fill('[name=reason]', 'Test credit for PayPal withdrawal flow'); AD.click('button:has-text("Apply adjustment")'); AD.wait_for_load_state()
+    C.goto(BASE + '/wallet'); cbal = balance(C)
+    check('wallet form has PayPal option + country list', C.locator('select[name=payout_method] option[value=paypal]').count() == 1 and C.locator('select[name=country] option', has_text='South Africa').count() == 1 and C.locator('select[name=country] option', has_text='India').count() == 1)
+    C.select_option('[name=payout_method]', 'paypal'); check('PayPal fee/currency note shown', C.locator('#paypal-fee-note').is_visible() and 'currency conversion' in C.inner_text('#paypal-fee-note'))
+    C.fill('[name=amount]', '600'); C.evaluate("document.querySelector('[name=paypal_email]').type='text'"); C.fill('[name=paypal_email]', 'not-an-email'); C.select_option('[name=country]', 'South Africa'); C.click('button:has-text("Submit request")')
+    check('invalid PayPal email rejected', 'valid PayPal email' in C.inner_text('.alert'))
+    C.select_option('[name=payout_method]', 'paypal'); C.fill('[name=amount]', '600'); C.fill('[name=paypal_email]', f'meena{run}@paypal-test.example'); C.select_option('[name=country]', 'South Africa'); C.click('button:has-text("Submit request")')
+    check('PayPal withdrawal submitted + held', 'submitted' in C.inner_text('.alert') and abs(balance(C) - (cbal - 600)) < 0.01)
+    MG.goto(BASE + '/admin/withdrawals'); check('approval page shows payout note', 'Pay the member from your PayPal/bank first, then enter the transaction ID here. The site does not send money itself.' in MG.inner_text('#payout-note'))
+    wrow = MG.locator('tr', has_text=f'meena{run}@paypal-test.example').first
+    check('approval shows method, PayPal email, country', 'PayPal' in wrow.locator('.wd-method').inner_text() and wrow.locator('.wd-country').inner_text() == 'South Africa')
+    check('approval field labelled PayPal transaction ID', 'PayPal transaction ID' in wrow.locator('form').inner_text())
+    wrow.locator('button[value=approve]').click(); MG.wait_for_load_state()
+    check('approve without transaction ID rejected', 'PayPal transaction ID' in MG.inner_text('.alert'))
+    wrow = MG.locator('tr', has_text=f'meena{run}@paypal-test.example').first
+    wrow.locator('[name=reference]').fill('PPTX9AB12345'); wrow.locator('button[value=approve]').click(); MG.wait_for_load_state()
+    check('manager approved PayPal withdrawal', 'approved' in MG.inner_text('.alert'))
+    C.goto(BASE + '/wallet'); cw = C.inner_text('main'); check('member sees PayPal payout + transaction ID', 'PPTX9AB12345' in cw and 'South Africa' in cw)
+    MG.goto(BASE + '/admin/withdrawals'); MG.wait_for_load_state('networkidle'); MG.screenshot(path=f'{SHOTS}/14-manager-withdrawals.png', full_page=True)
+    AD.goto(BASE + '/admin/audit'); au = AD.inner_text('main')
+    check('audit log records manager actions with username', f'by manager {mguid}' in au and 'PPTX9AB12345' in au and 'manager created' in au)
+
+    # disable / reset manager
+    AD.goto(BASE + '/admin/managers'); AD.locator(f'.manager-row[data-manager="{mguid}"] button:has-text("Disable")').click(); AD.wait_for_load_state()
+    MG.goto(BASE + '/admin'); check('disabled manager is signed out', '/login' in MG.url)
+    M2 = ctx(); login(M2, mguid, MG_PW); check('disabled manager cannot log in', 'blocked' in M2.inner_text('main'))
+    AD.goto(BASE + '/admin/managers'); AD.locator(f'.manager-row[data-manager="{mguid}"] button:has-text("Enable")').click(); AD.wait_for_load_state()
+    mr = AD.locator(f'.manager-row[data-manager="{mguid}"]'); mr.locator('summary').click()
+    check('reset form fields are new-password', mr.locator('input[type=password][autocomplete=new-password]').count() == 2)
+    mr.locator('[name=new_password]').fill(MG_PW2); mr.locator('[name=confirm_password]').fill(MG_PW2); mr.locator('button:has-text("Reset password")').click(); AD.wait_for_load_state()
+    check('manager password reset', 'reset' in AD.inner_text('.alert'))
+    M3 = ctx(); login(M3, mguid, MG_PW); check('old manager password rejected', '/login' in M3.url)
+    login(M3, mguid, MG_PW2); check('new manager password works', M3.url.endswith('/admin'))
+    AD.goto(BASE + '/admin/managers'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/15-admin-managers.png', full_page=True)
 
     # cancel a paid order -> commission reversal
     C.goto(BASE + '/shop'); f = C.locator('form.product').nth(1); p2 = money(f.locator('.price').inner_text())
@@ -253,7 +326,7 @@ with sync_playwright() as p:
         ver = subprocess.run(['node', '-e', 'process.stdout.write(String(require("bcryptjs").compareSync(process.argv[1], process.argv[2])))', 'HashTestPass2026', h], capture_output=True, text=True, cwd=ROOT).stdout
         check('setup-hash output verifies with bcrypt', ver == 'true', ver)
         L7 = ctx(); login(L7, 'admin', ADMIN_PW); check('setup-hash did not change admin password', L7.url.endswith('/admin'))
-    allerrs = sum([x.errs for x in (pub, A, B, C, AD)], [])
+    allerrs = sum([x.errs for x in (pub, A, B, C, AD, MG)], [])
     check('no JS page errors', not allerrs, str(allerrs[:3]))
     b.close()
 

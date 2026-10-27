@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE,
   phone TEXT,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin')),
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin','manager')),
   referral_code TEXT UNIQUE,
   sponsor_id INTEGER REFERENCES users(id),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked')),
@@ -89,6 +89,38 @@ CREATE TABLE IF NOT EXISTS contact_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+// ---------- migration: allow the 'manager' (Approval Manager staff) role on older databases ----------
+{
+  const sql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql;
+  if (!sql.includes("'manager'")) {
+    const cols = 'id, name, email, username, phone, password_hash, role, referral_code, sponsor_id, status, created_at';
+    db.pragma('foreign_keys = OFF');
+    db.transaction(() => {
+      db.exec(`CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT UNIQUE, username TEXT UNIQUE, phone TEXT,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin','manager')),
+        referral_code TEXT UNIQUE, sponsor_id INTEGER REFERENCES users(id),
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','blocked')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')));
+        INSERT INTO users_new(${cols}) SELECT ${cols} FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+        CREATE INDEX IF NOT EXISTS idx_users_sponsor ON users(sponsor_id);`);
+    })();
+    db.pragma('foreign_keys = ON');
+    const bad = db.pragma('foreign_key_check');
+    if (bad.length) console.warn('foreign_key_check after users migration reported', bad.length, 'issue(s)');
+  }
+}
+// ---------- migration: payout method / PayPal email / country on withdrawals ----------
+{
+  const have = new Set(db.prepare('PRAGMA table_info(withdrawals)').all().map(c => c.name));
+  if (!have.has('payout_method')) db.exec("ALTER TABLE withdrawals ADD COLUMN payout_method TEXT NOT NULL DEFAULT 'bank_upi'");
+  if (!have.has('paypal_email')) db.exec('ALTER TABLE withdrawals ADD COLUMN paypal_email TEXT');
+  if (!have.has('country')) db.exec("ALTER TABLE withdrawals ADD COLUMN country TEXT NOT NULL DEFAULT 'India'");
+}
 
 // ---------- migration: every account gets a unique, case-insensitive User ID (users.username) ----------
 const USER_ID_RE = /^[A-Za-z0-9_]{4,20}$/;

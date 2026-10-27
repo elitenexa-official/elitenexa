@@ -62,6 +62,8 @@ const clean = (v, max = 500) => String(v == null ? '' : v).trim().slice(0, max);
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const fmtDate = (s) => s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST' : '';
 const pwError = (pw, min = 8) => pw.length < min ? `Password must be at least ${min} characters.` : (pw.length > 128 ? 'Password is too long (max 128 characters).' : null);
+const PAYOUT_COUNTRIES = ['India', 'South Africa', 'United Arab Emirates', 'United States', 'United Kingdom', 'Canada', 'Australia', 'Singapore', 'Malaysia', 'Nepal', 'Bangladesh', 'Sri Lanka', 'Nigeria', 'Kenya', 'Other'];
+const PAYOUT_METHODS = { bank_upi: 'Bank / UPI', paypal: 'PayPal' };
 function flash(req, type, msg) { req.session.flash = { type, msg }; }
 
 app.use((req, res, next) => { if (!req.session.csrf) req.session.csrf = crypto.randomBytes(24).toString('hex'); next(); });
@@ -76,6 +78,8 @@ app.use((req, res, next) => {
   res.locals.csrf = req.session.csrf;
   res.locals.flash = req.session.flash; delete req.session.flash;
   res.locals.DEMO_MODE = process.env.DEMO_MODE === '1'; res.locals.ADMIN_PW_FROM_ENV = D.ADMIN_PW_FROM_ENV; res.locals.ADMIN_PW_SOURCE = D.ADMIN_PW_SOURCE;
+  res.locals.isStaff = isStaff(res.locals.user); res.locals.isManager = !!res.locals.user && res.locals.user.role === 'manager';
+  res.locals.PAYOUT_COUNTRIES = PAYOUT_COUNTRIES;
   res.locals.inr = inr; res.locals.fmtDate = fmtDate; res.locals.path = req.path; res.locals.BRAND = BRAND;
   res.locals.baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
   next();
@@ -92,7 +96,10 @@ app.use((req, res, next) => {
 });
 
 const requireMember = (req, res, next) => (req.user && req.user.role === 'member') ? next() : res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
-const requireAdmin = (req, res, next) => (req.user && req.user.role === 'admin') ? next() : res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+const isStaff = (u) => !!u && (u.role === 'admin' || u.role === 'manager');
+// Staff area (/admin): admin = full access; manager ("Approval Manager") = limited, see MANAGER_ALLOWED below
+const requireStaff = (req, res, next) => isStaff(req.user) ? next() : res.redirect('/login?next=' + encodeURIComponent(req.originalUrl));
+const forbidden = (res) => res.status(403).render('error', { title: 'Access denied', message: 'Your account does not have permission to open this page.' });
 
 // Simple login rate limit (per IP, in memory)
 const attempts = new Map();
@@ -125,7 +132,7 @@ app.post('/contact', (req, res) => {
 // Referral: accepts a member's referral code (e.g. ENAB12CD) or their User ID
 const findSponsor = (ref) => db.prepare("SELECT id, name, username FROM users WHERE (referral_code=upper(?) OR lower(username)=lower(?)) AND status='active' AND role='member'").get(ref, ref);
 app.get('/signup', (req, res) => {
-  if (req.user) return res.redirect(req.user.role === 'admin' ? '/admin' : '/dashboard');
+  if (req.user) return res.redirect(isStaff(req.user) ? '/admin' : '/dashboard');
   const ref = clean(req.query.ref, 20);
   const sponsor = ref ? findSponsor(ref) : null;
   res.render('signup', { title: 'Join free', form: { ref }, sponsor });
@@ -164,7 +171,7 @@ app.post('/signup', (req, res) => {
 });
 
 app.get('/login', (req, res) => {
-  if (req.user) return res.redirect(req.user.role === 'admin' ? '/admin' : '/dashboard');
+  if (req.user) return res.redirect(isStaff(req.user) ? '/admin' : '/dashboard');
   res.render('login', { title: 'Log in', form: {}, next: clean(req.query.next, 200) });
 });
 app.post('/login', (req, res) => {
@@ -180,8 +187,8 @@ app.post('/login', (req, res) => {
   req.session.regenerate(() => {
     req.session.uid = u.id;
     const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : null;
-    const ok = safeNext && (u.role === 'admin' ? safeNext.startsWith('/admin') : !safeNext.startsWith('/admin'));
-    res.redirect(ok ? safeNext : (u.role === 'admin' ? '/admin' : '/dashboard'));
+    const ok = safeNext && (isStaff(u) ? safeNext.startsWith('/admin') : !safeNext.startsWith('/admin'));
+    res.redirect(ok ? safeNext : (isStaff(u) ? '/admin' : '/dashboard'));
   });
 });
 app.post('/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
@@ -265,15 +272,21 @@ m.get('/wallet', (req, res) => {
   res.render('member/wallet', { title: 'My wallet', ...sum, ledger, withdrawals });
 });
 m.post('/wallet/withdraw', (req, res) => {
-  const amt = toPaise(req.body.amount), details = clean(req.body.payout_details, 300);
+  const amt = toPaise(req.body.amount);
+  const method = req.body.payout_method === 'paypal' ? 'paypal' : 'bank_upi';
+  const paypal = method === 'paypal' ? clean(req.body.paypal_email, 200).toLowerCase() : null;
+  const country = clean(req.body.country, 60) || 'India';
+  const details = method === 'paypal' ? `PayPal: ${paypal}` : clean(req.body.payout_details, 300);
   const s = D.getSettings();
   if (!Number.isInteger(amt) || amt <= 0) { flash(req, 'err', 'Enter a valid amount.'); return res.redirect('/wallet'); }
   if (amt < s.min_withdrawal_rupees * 100) { flash(req, 'err', `Minimum withdrawal is ${inr(s.min_withdrawal_rupees * 100)}.`); return res.redirect('/wallet'); }
-  if (details.length < 5) { flash(req, 'err', 'Enter your UPI ID or bank account details for payout.'); return res.redirect('/wallet'); }
+  if (!PAYOUT_COUNTRIES.includes(country)) { flash(req, 'err', 'Please choose your country from the list.'); return res.redirect('/wallet'); }
+  if (method === 'paypal' && !EMAIL_RE.test(paypal)) { flash(req, 'err', 'Enter a valid PayPal email address (your own PayPal account).'); return res.redirect('/wallet'); }
+  if (method === 'bank_upi' && details.length < 5) { flash(req, 'err', 'Enter your UPI ID or bank account details for payout.'); return res.redirect('/wallet'); }
   try {
     db.transaction(() => {
       if (D.balance(req.user.id) < amt) throw new Error('Amount is more than your available balance.');
-      const wid = db.prepare('INSERT INTO withdrawals(user_id, amount_paise, payout_details) VALUES (?,?,?)').run(req.user.id, amt, details).lastInsertRowid;
+      const wid = db.prepare('INSERT INTO withdrawals(user_id, amount_paise, payout_details, payout_method, paypal_email, country) VALUES (?,?,?,?,?,?)').run(req.user.id, amt, details, method, paypal, country).lastInsertRowid;
       db.prepare("INSERT INTO wallet_ledger(user_id, amount_paise, type, reason, withdrawal_id) VALUES (?,?, 'withdrawal_hold', ?, ?)")
         .run(req.user.id, -amt, `Withdrawal request #${wid} (amount on hold until processed)`, wid);
     })();
@@ -285,7 +298,17 @@ app.use(m);
 
 // ---------- admin ----------
 const a = express.Router();
-a.use(requireAdmin);
+a.use(requireStaff);
+// Approval Managers may ONLY use these routes; everything else under /admin is 403 for them (enforced server-side).
+const MANAGER_ALLOWED = [
+  ['GET', /^\/$/], ['GET', /^\/orders$/], ['POST', /^\/orders\/\d+\/status$/],
+  ['GET', /^\/withdrawals$/], ['POST', /^\/withdrawals\/\d+$/],
+];
+a.use((req, res, next) => {
+  if (req.user.role === 'admin') return next();
+  if (req.user.role === 'manager' && MANAGER_ALLOWED.some(([m, re]) => m === req.method && re.test(req.path))) return next();
+  return forbidden(res);
+});
 a.get('/', (req, res) => {
   const q = (sql, ...p) => db.prepare(sql).get(...p);
   const stats = {
@@ -299,7 +322,7 @@ a.get('/', (req, res) => {
     paidOut: q("SELECT COALESCE(SUM(amount_paise),0) v FROM withdrawals WHERE status='approved'").v,
   };
   const recentOrders = db.prepare('SELECT o.*, u.name AS member FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC LIMIT 6').all();
-  const recentAudit = db.prepare('SELECT l.*, a.username AS admin, t.name AS target FROM audit_log l LEFT JOIN users a ON a.id=l.admin_id LEFT JOIN users t ON t.id=l.target_user_id ORDER BY l.id DESC LIMIT 6').all();
+  const recentAudit = req.user.role === 'admin' ? db.prepare('SELECT l.*, a.username AS admin, t.name AS target FROM audit_log l LEFT JOIN users a ON a.id=l.admin_id LEFT JOIN users t ON t.id=l.target_user_id ORDER BY l.id DESC LIMIT 6').all() : [];
   res.render('admin/dashboard', { title: 'Admin dashboard', stats, recentOrders, recentAudit });
 });
 a.get('/members', (req, res) => {
@@ -365,6 +388,7 @@ a.post('/orders/:id/status', (req, res) => {
       const o = db.prepare('SELECT * FROM orders WHERE id=?').get(id);
       if (!o) throw new Error('Order not found.');
       if (!TRANSITIONS[o.status].includes(to)) throw new Error(`Cannot change order from ${o.status} to ${to}.`);
+      if (req.user.role === 'manager' && !['paid', 'cancelled'].includes(to)) throw new Error('Approval Managers can only mark orders paid or cancelled.');
       db.prepare("UPDATE orders SET status=?, updated_at=datetime('now'), paid_at=CASE WHEN ?='paid' THEN datetime('now') ELSE paid_at END WHERE id=?").run(to, to, id);
       let extra = '';
       if (to === 'paid') {
@@ -375,7 +399,7 @@ a.post('/orders/:id/status', (req, res) => {
         db.prepare('UPDATE products SET stock=stock+? WHERE id=?').run(o.qty, o.product_id);
         if (o.commission_paid) { const n = D.reverseCommissions(id, req.user.id); extra = ` ${n} commission entr${n === 1 ? 'y' : 'ies'} reversed.`; }
       }
-      D.audit(req.user.id, 'order_' + to, o.user_id, `Order #${id} ${o.status} → ${to}.${extra}`);
+      D.audit(req.user.id, 'order_' + to, o.user_id, `Order #${id} ${o.status} → ${to} by ${req.user.role} ${req.user.username}.${extra}`);
       return `Order #${id} marked ${to}.${extra}`;
     })();
     flash(req, 'ok', msg);
@@ -409,25 +433,27 @@ a.post('/wallet/adjust', (req, res) => {
 });
 
 a.get('/withdrawals', (req, res) => {
-  const rows = db.prepare(`SELECT w.*, u.name AS member, u.email, a.username AS admin FROM withdrawals w JOIN users u ON u.id=w.user_id LEFT JOIN users a ON a.id=w.processed_by ORDER BY (w.status='pending') DESC, w.id DESC`).all();
+  const rows = db.prepare(`SELECT w.*, u.name AS member, u.email, u.username AS member_uid, a.username AS admin, a.role AS admin_role FROM withdrawals w JOIN users u ON u.id=w.user_id LEFT JOIN users a ON a.id=w.processed_by ORDER BY (w.status='pending') DESC, w.id DESC`).all();
   res.render('admin/withdrawals', { title: 'Withdrawals', rows });
 });
 a.post('/withdrawals/:id', (req, res) => {
-  const id = Number(req.params.id), action = req.body.action, note = clean(req.body.note, 300);
+  const id = Number(req.params.id), action = req.body.action;
+  const note = clean(action === 'approve' ? req.body.reference : req.body.reason, 300);
   try {
     db.transaction(() => {
       const w = db.prepare("SELECT * FROM withdrawals WHERE id=? AND status='pending'").get(id);
       if (!w) throw new Error('Request not found or already processed.');
       if (action === 'approve') {
-        if (note.length < 3) throw new Error('Enter the payout reference (e.g. UPI/UTR number) when approving.');
-        db.prepare("UPDATE withdrawals SET status='approved', admin_note=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(note, req.user.id, id);
-        D.audit(req.user.id, 'withdrawal_approved', w.user_id, `Withdrawal #${id} ${inr(w.amount_paise)} approved. Payout ref: ${note}`);
+        const refLabel = w.payout_method === 'paypal' ? 'PayPal transaction ID' : 'UTR';
+        if (note.length < 3) throw new Error(`Enter the ${refLabel} of the payment you made before approving.`);
+        db.prepare("UPDATE withdrawals SET status='approved', admin_note=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(`${refLabel}: ${note}`, req.user.id, id);
+        D.audit(req.user.id, 'withdrawal_approved', w.user_id, `Withdrawal #${id} ${inr(w.amount_paise)} approved by ${req.user.role} ${req.user.username}. Method: ${PAYOUT_METHODS[w.payout_method] || w.payout_method}${w.paypal_email ? ' (' + w.paypal_email + ')' : ''}, country: ${w.country}. ${refLabel}: ${note}`);
       } else if (action === 'reject') {
         if (note.length < 3) throw new Error('Enter a reason when rejecting.');
         db.prepare("UPDATE withdrawals SET status='rejected', admin_note=?, processed_by=?, processed_at=datetime('now') WHERE id=?").run(note, req.user.id, id);
         db.prepare("INSERT INTO wallet_ledger(user_id, amount_paise, type, reason, withdrawal_id, created_by) VALUES (?,?, 'withdrawal_release', ?, ?, ?)")
           .run(w.user_id, w.amount_paise, `Withdrawal #${id} rejected – amount returned to wallet (${note})`, id, req.user.id);
-        D.audit(req.user.id, 'withdrawal_rejected', w.user_id, `Withdrawal #${id} ${inr(w.amount_paise)} rejected: ${note}`);
+        D.audit(req.user.id, 'withdrawal_rejected', w.user_id, `Withdrawal #${id} ${inr(w.amount_paise)} rejected by ${req.user.role} ${req.user.username}: ${note}`);
       } else throw new Error('Unknown action.');
     })();
     flash(req, 'ok', `Withdrawal #${id} ${action === 'approve' ? 'approved' : 'rejected'}.`);
@@ -457,8 +483,43 @@ a.post('/settings', (req, res) => {
 a.get('/password', (req, res) => res.render('admin/password', { title: 'Change password', min: 12 }));
 a.post('/password', (req, res) => changePassword(req, res, { view: 'admin/password', back: '/admin/password', min: 12, title: 'Change password' }));
 a.get('/audit', (req, res) => {
-  const rows = db.prepare('SELECT l.*, a.username AS admin, t.name AS target, t.email AS target_email FROM audit_log l LEFT JOIN users a ON a.id=l.admin_id LEFT JOIN users t ON t.id=l.target_user_id ORDER BY l.id DESC LIMIT 500').all();
+  const rows = db.prepare('SELECT l.*, a.username AS admin, a.role AS admin_role, t.name AS target, t.email AS target_email FROM audit_log l LEFT JOIN users a ON a.id=l.admin_id LEFT JOIN users t ON t.id=l.target_user_id ORDER BY l.id DESC LIMIT 500').all();
   res.render('admin/audit', { title: 'Audit log', rows });
+});
+// ---------- Approval Managers (admin only) ----------
+const managerList = () => db.prepare("SELECT id, name, username, status, created_at FROM users WHERE role='manager' ORDER BY id").all();
+const renderManagers = (res, extra = {}, code = 200) => res.status(code).render('admin/managers', { title: 'Approval Managers', managers: managerList(), form: {}, error: null, ...extra });
+a.get('/managers', (req, res) => renderManagers(res));
+a.post('/managers', (req, res) => {
+  const form = { name: clean(req.body.name, 100), username: clean(req.body.username, 40) };
+  const pw = String(req.body.new_password || ''), pw2 = String(req.body.confirm_password || '');
+  let error = null;
+  if (form.name.length < 2) error = 'Enter the manager\'s name.';
+  else error = D.validateUserId(form.username) || pwError(pw, 12) || (pw !== pw2 ? 'Password and confirmation do not match.' : null);
+  if (error) return renderManagers(res, { form, error }, 400);
+  const id = db.prepare("INSERT INTO users(name, username, password_hash, role) VALUES (?,?,?, 'manager')").run(form.name, form.username, bcrypt.hashSync(pw, 12)).lastInsertRowid;
+  D.audit(req.user.id, 'manager_created', id, `Approval Manager "${form.username}" (${form.name}) created`);
+  flash(req, 'ok', `Approval Manager ${form.username} created. Share the password with them privately.`); res.redirect('/admin/managers');
+});
+const getManager = (id) => db.prepare("SELECT id, name, username, status FROM users WHERE id=? AND role='manager'").get(Number(id));
+const dropSessions = (uid) => { try { db.prepare("DELETE FROM sessions WHERE json_extract(sess,'$.uid')=?").run(uid); } catch (_) {} };
+a.post('/managers/:id/status', (req, res) => {
+  const mg = getManager(req.params.id); if (!mg) { flash(req, 'err', 'Manager not found.'); return res.redirect('/admin/managers'); }
+  const status = req.body.status === 'blocked' ? 'blocked' : 'active';
+  db.prepare('UPDATE users SET status=? WHERE id=?').run(status, mg.id);
+  if (status === 'blocked') dropSessions(mg.id);
+  D.audit(req.user.id, status === 'blocked' ? 'manager_disabled' : 'manager_enabled', mg.id, `Approval Manager "${mg.username}" ${status === 'blocked' ? 'disabled' : 'enabled'}`);
+  flash(req, 'ok', `Manager ${mg.username} ${status === 'blocked' ? 'disabled' : 'enabled'}.`); res.redirect('/admin/managers');
+});
+a.post('/managers/:id/password', (req, res) => {
+  const mg = getManager(req.params.id); if (!mg) { flash(req, 'err', 'Manager not found.'); return res.redirect('/admin/managers'); }
+  const pw = String(req.body.new_password || ''), pw2 = String(req.body.confirm_password || '');
+  const error = pwError(pw, 12) || (pw !== pw2 ? 'Password and confirmation do not match.' : null);
+  if (error) { flash(req, 'err', `${mg.username}: ${error}`); return res.redirect('/admin/managers'); }
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(pw, 12), mg.id);
+  dropSessions(mg.id);
+  D.audit(req.user.id, 'manager_password_reset', mg.id, `Password reset for Approval Manager "${mg.username}" (their sessions signed out)`);
+  flash(req, 'ok', `Password for ${mg.username} reset. Their existing sessions were signed out.`); res.redirect('/admin/managers');
 });
 a.get('/messages', (req, res) => res.render('admin/messages', { title: 'Contact messages', rows: db.prepare('SELECT * FROM contact_messages ORDER BY id DESC').all() }));
 // ---------- one-time admin password-hash tool (only when ADMIN_SETUP_TOKEN is set, >= 24 chars) ----------
