@@ -1,0 +1,24 @@
+<%- include('../partials/header') %>
+<section class="wrap narrow pad">
+  <div class="page-title center"><img src="/brand/mark_256.png" alt="" width="64" height="64"><h1>Admin password hash</h1>
+    <p class="muted small">One-time setup tool. This page does not change any account; it only converts your new admin password into a secure bcrypt hash.</p></div>
+  <% if (hash) { %>
+    <div class="card form narrow-form" id="hash-result">
+      <h3>Your bcrypt hash</h3>
+      <code id="hash" class="hashbox" tabindex="0"><%= hash %></code>
+      <p class="small">Copy this into Render env var ADMIN_PASSWORD_HASH, then remove ADMIN_SETUP_TOKEN.</p>
+      <p class="small muted">After Render redeploys, log in at <a href="/login">/login</a> with User ID <b>admin</b> and the password you just typed.</p>
+    </div>
+  <% } else { %>
+    <form method="post" action="/admin/setup-hash" class="card form narrow-form" id="setup-hash-form" autocomplete="on">
+      <% if (error) { %><div class="alert alert-err"><%= error %></div><% } %>
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <input type="hidden" name="token" value="<%= token %>">
+      <input type="text" name="username" value="admin" autocomplete="username" readonly hidden aria-hidden="true">
+      <label for="password">New password <span class="muted small">(min 12 characters)</span><input type="password" id="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+      <label for="confirm">Confirm password<input type="password" id="confirm" name="confirm" required minlength="12" maxlength="128" autocomplete="new-password"></label>
+      <button type="submit" class="btn btn-gold">Generate hash</button>
+    </form>
+  <% } %>
+</section>
+<%- include('../partials/footer') %>

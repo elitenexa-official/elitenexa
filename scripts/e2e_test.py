@@ -5,7 +5,7 @@ BASE = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:3100'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHOTS = os.path.join(ROOT, 'screenshots'); os.makedirs(SHOTS, exist_ok=True)
 # Admin password: ADMIN_PASSWORD env (server started with the same value) or the local ADMIN_CREDENTIALS.txt
-ADMIN_PW = os.environ.get('ADMIN_PASSWORD') or re.search(r'Password: (\S+)', open(os.path.join(ROOT, 'ADMIN_CREDENTIALS.txt')).read()).group(1)
+ADMIN_PW = os.environ.get('E2E_ADMIN_PW') or os.environ.get('ADMIN_PASSWORD') or re.search(r'Password: (\S+)', open(os.path.join(ROOT, 'ADMIN_CREDENTIALS.txt')).read()).group(1)
 results = []
 def check(name, cond, info=''):
     results.append((name, bool(cond))); print(('PASS ' if cond else 'FAIL ') + name + (f'  [{info}]' if info else ''))
@@ -198,7 +198,7 @@ with sync_playwright() as p:
     L.goto(BASE + '/dashboard'); check('other sessions signed out after password change', '/login' in L.url)
     # admin change password (change then revert so ADMIN_CREDENTIALS.txt stays valid)
     AD.goto(BASE + '/admin/password')
-    if os.environ.get('ADMIN_PASSWORD'): check('admin password page notes server-managed password', AD.locator('#env-managed-note').count() == 1)
+    if os.environ.get('ADMIN_PASSWORD') or os.environ.get('ADMIN_PASSWORD_HASH'): check('admin password page notes server-managed password', AD.locator('#env-managed-note').count() == 1)
     else: check('no server-managed note without ADMIN_PASSWORD', AD.locator('#env-managed-note').count() == 0)
     if os.environ.get('DEMO_MODE') == '1':
         check('demo banner shown to admin', AD.locator('#demo-banner').count() == 1)
@@ -230,6 +230,29 @@ with sync_playwright() as p:
     AD.goto(BASE + '/admin'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/06-admin-dashboard.png', full_page=True)
     AD.goto(BASE + '/admin/orders'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/08-admin-orders.png', full_page=True)
     AD.goto(BASE + '/admin/withdrawals'); AD.wait_for_load_state('networkidle'); AD.screenshot(path=f'{SHOTS}/09-admin-withdrawals.png', full_page=True)
+    # one-time admin password-hash tool
+    SETUP_TOKEN = os.environ.get('ADMIN_SETUP_TOKEN', '')
+    S = ctx()
+    if len(SETUP_TOKEN) < 24:
+        r = S.goto(BASE + '/admin/setup-hash'); check('setup-hash is 404 when ADMIN_SETUP_TOKEN not set', r.status == 404, r.status)
+        r = S.goto(BASE + '/admin/setup-hash?token=' + 'x' * 32); check('setup-hash is 404 with any token when env not set', r.status == 404, r.status)
+    else:
+        r = S.goto(BASE + '/admin/setup-hash'); check('setup-hash 404 without token', r.status == 404, r.status)
+        r = S.goto(BASE + '/admin/setup-hash?token=' + 'x' * len(SETUP_TOKEN)); check('setup-hash 404 with wrong token', r.status == 404, r.status)
+        r = S.goto(BASE + '/admin/setup-hash?token=' + SETUP_TOKEN); check('setup-hash form opens with token', r.status == 200, r.status)
+        check('setup-hash form fields', all(S.locator(f'input#{n}[name={n}][type=password][autocomplete=new-password]').count() == 1 for n in ('password', 'confirm')) and S.locator('input[type=hidden][name=token]').count() == 1)
+        S.fill('#password', 'Short12'); S.fill('#confirm', 'Short12'); S.evaluate("document.querySelectorAll('#setup-hash-form input').forEach(i=>i.removeAttribute('minlength'))"); S.click('button:has-text("Generate hash")')
+        check('setup-hash rejects < 12 chars', 'at least 12' in S.inner_text('main') and S.locator('#hash').count() == 0)
+        S.fill('#password', 'HashTestPass2026'); S.fill('#confirm', 'HashTestPass2026x'); S.evaluate("document.getElementById('confirm').setCustomValidity('')"); S.click('button:has-text("Generate hash")')
+        check('setup-hash rejects mismatch', 'do not match' in S.inner_text('main') and S.locator('#hash').count() == 0)
+        S.fill('#password', 'HashTestPass2026'); S.fill('#confirm', 'HashTestPass2026'); S.click('button:has-text("Generate hash")'); S.wait_for_load_state()
+        h = S.inner_text('#hash').strip() if S.locator('#hash').count() else ''
+        check('setup-hash shows bcrypt cost-12 hash', re.fullmatch(r'\$2[aby]\$12\$[./A-Za-z0-9]{53}', h) is not None)
+        check('setup-hash shows instructions', 'Copy this into Render env var ADMIN_PASSWORD_HASH, then remove ADMIN_SETUP_TOKEN.' in S.inner_text('main'))
+        check('setup-hash does not echo the password', 'HashTestPass2026' not in S.content())
+        ver = subprocess.run(['node', '-e', 'process.stdout.write(String(require("bcryptjs").compareSync(process.argv[1], process.argv[2])))', 'HashTestPass2026', h], capture_output=True, text=True, cwd=ROOT).stdout
+        check('setup-hash output verifies with bcrypt', ver == 'true', ver)
+        L7 = ctx(); login(L7, 'admin', ADMIN_PW); check('setup-hash did not change admin password', L7.url.endswith('/admin'))
     allerrs = sum([x.errs for x in (pub, A, B, C, AD)], [])
     check('no JS page errors', not allerrs, str(allerrs[:3]))
     b.close()

@@ -165,23 +165,33 @@ function newReferralCode() {
   }
 }
 
-// ADMIN_PASSWORD (optional, e.g. hosted demo): the 'admin' account's password is kept in sync with it on every start.
+// Optional server-managed admin password (hosted demo). On every start the 'admin' account's password hash is kept
+// in sync with ADMIN_PASSWORD_HASH (a bcrypt hash; takes precedence) or ADMIN_PASSWORD (plaintext, min 12 chars).
+// Values are never logged.
+const BCRYPT_RE = /^\$2[aby]\$(0[4-9]|[12]\d|3[01])\$[./A-Za-z0-9]{53}$/;
+const ENV_ADMIN_HASH = process.env.ADMIN_PASSWORD_HASH ? String(process.env.ADMIN_PASSWORD_HASH).trim() : '';
+const ADMIN_HASH_FROM_ENV = BCRYPT_RE.test(ENV_ADMIN_HASH);
+if (ENV_ADMIN_HASH && !ADMIN_HASH_FROM_ENV) console.warn('ADMIN_PASSWORD_HASH is set but is not a valid bcrypt hash; ignoring it.');
 const ENV_ADMIN_PW = process.env.ADMIN_PASSWORD ? String(process.env.ADMIN_PASSWORD) : '';
-const ADMIN_PW_FROM_ENV = ENV_ADMIN_PW.length >= 12;
-if (ENV_ADMIN_PW && !ADMIN_PW_FROM_ENV) console.warn('ADMIN_PASSWORD is set but shorter than 12 characters; ignoring it.');
+const ADMIN_PLAIN_FROM_ENV = !ADMIN_HASH_FROM_ENV && ENV_ADMIN_PW.length >= 12;
+if (ENV_ADMIN_PW && ENV_ADMIN_PW.length < 12 && !ADMIN_HASH_FROM_ENV) console.warn('ADMIN_PASSWORD is set but shorter than 12 characters; ignoring it.');
+const ADMIN_PW_FROM_ENV = ADMIN_HASH_FROM_ENV || ADMIN_PLAIN_FROM_ENV;
+const ADMIN_PW_SOURCE = ADMIN_HASH_FROM_ENV ? 'ADMIN_PASSWORD_HASH' : (ADMIN_PLAIN_FROM_ENV ? 'ADMIN_PASSWORD' : null);
 
 function seed() {
   const admin = db.prepare("SELECT id FROM users WHERE role='admin'").get();
+  const envHash = () => ADMIN_HASH_FROM_ENV ? ENV_ADMIN_HASH : bcrypt.hashSync(ENV_ADMIN_PW, 12);
   if (!admin && ADMIN_PW_FROM_ENV) {
     db.prepare("INSERT INTO users(name, username, password_hash, role) VALUES (?,?,?, 'admin')")
-      .run('Administrator', 'admin', bcrypt.hashSync(ENV_ADMIN_PW, 12));
-    console.log('Admin account created (password from ADMIN_PASSWORD environment variable).');
+      .run('Administrator', 'admin', envHash());
+    console.log(`Admin account created (password from ${ADMIN_PW_SOURCE} environment variable).`);
   } else if (ADMIN_PW_FROM_ENV) {
     const row = db.prepare("SELECT id, password_hash FROM users WHERE lower(username)='admin' AND role='admin'").get();
-    if (row && !bcrypt.compareSync(ENV_ADMIN_PW, row.password_hash)) {
-      db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(ENV_ADMIN_PW, 12), row.id);
+    const differs = row && (ADMIN_HASH_FROM_ENV ? row.password_hash !== ENV_ADMIN_HASH : !bcrypt.compareSync(ENV_ADMIN_PW, row.password_hash));
+    if (differs) {
+      db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(envHash(), row.id);
       try { db.prepare("DELETE FROM sessions WHERE json_extract(sess,'$.uid')=?").run(row.id); } catch (_) {}
-      console.log('Admin password updated from ADMIN_PASSWORD environment variable.');
+      console.log(`Admin password updated from ${ADMIN_PW_SOURCE} environment variable; admin sessions signed out.`);
     }
   } else if (!admin) {
     const pw = crypto.randomBytes(18).toString('base64').replace(/[+/=]/g, '').slice(0, 20) + '#7a';
@@ -273,4 +283,4 @@ function audit(adminId, action, targetUserId, details) {
     .run(adminId, action, targetUserId || null, typeof details === 'string' ? details : JSON.stringify(details));
 }
 
-module.exports = { db, ADMIN_PW_FROM_ENV, validateUserId, USER_ID_RE, getSettings, saveSetting, newReferralCode, balance, personalVolume, downline, teamVolume, rankFor, creditCommissions, reverseCommissions, audit, DATA_DIR };
+module.exports = { db, ADMIN_PW_FROM_ENV, ADMIN_PW_SOURCE, validateUserId, USER_ID_RE, getSettings, saveSetting, newReferralCode, balance, personalVolume, downline, teamVolume, rankFor, creditCommissions, reverseCommissions, audit, DATA_DIR };

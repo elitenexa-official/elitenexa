@@ -21,6 +21,8 @@ Environment variables:
 | `BASE_URL` | request host | Used for referral links and og:image, e.g. `https://elitenexa.in` |
 | `COOKIE_SECURE` | auto | Default `auto`: cookie gets `Secure` when the request arrived over HTTPS (proxy/tunnel). Set `1` to force |
 | `ADMIN_PASSWORD` | – | Optional (min 12 chars). On every start the `admin` account's password is set to this value (no `ADMIN_CREDENTIALS.txt` is written). Never logged |
+| `ADMIN_PASSWORD_HASH` | – | Optional bcrypt hash (`$2a$`/`$2b$`…). On every start the `admin` password hash is set to it (admin sessions signed out when it changes). **Takes precedence over `ADMIN_PASSWORD`**; an invalid hash is ignored with a warning. Never logged |
+| `ADMIN_SETUP_TOKEN` | – | Optional, ≥ 24 chars. Enables the one-time hash tool `/admin/setup-hash?token=…` (404 otherwise). Remove after use |
 | `DEMO_MODE` | – | `1` shows admins a dismissible "Demo mode – data resets when the server restarts" banner |
 | `TRUST_PROXY` | `loopback` | Trusts X-Forwarded-* from local proxies (cloudflared/Nginx on same box). Set `1` for one remote hop (Render/Railway) |
 
@@ -41,6 +43,12 @@ Environment variables:
 ## Deploy
 ### Free demo on Render (Blueprint)
 `render.yaml` defines one free web service `elitenexa` (Node 20, Singapore, `npm ci` / `npm start`, health check `/`). In Render: **New → Blueprint**, pick this GitHub repo, enter a value for `ADMIN_PASSWORD` (12+ chars) when asked; `SESSION_SECRET` is generated automatically. The free plan has **no persistent disk**: the SQLite DB resets on every restart/spin-down (after ~15 min idle), and the app re-seeds the 4 sample products and the `admin` login (password = `ADMIN_PASSWORD`). Demo only – use a VPS or a paid plan with a disk for real members.
+
+#### Setting the admin password without typing plaintext into Render
+1. In Render → Environment, add `ADMIN_SETUP_TOKEN` = a random string of 24+ characters and save (service redeploys).
+2. Open `https://<your-app>.onrender.com/admin/setup-hash?token=<that token>`, enter the new admin password twice (a password manager can generate/save it here, User ID `admin`) and click **Generate hash**. The page does **not** change any account; it only shows a bcrypt (cost 12) hash.
+3. Copy the hash into Render env var `ADMIN_PASSWORD_HASH`, **delete `ADMIN_SETUP_TOKEN`** (and `ADMIN_PASSWORD` if set), save. After the redeploy, log in at `/login` as `admin` with that password.
+The tool is rate-limited, compares the token in constant time, and returns 404 for a missing/wrong token or when the env var is not set.
 
 ### Production
 Any host that runs Node and keeps a persistent disk for `data/`:

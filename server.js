@@ -75,7 +75,7 @@ app.use((req, res, next) => {
   }
   res.locals.csrf = req.session.csrf;
   res.locals.flash = req.session.flash; delete req.session.flash;
-  res.locals.DEMO_MODE = process.env.DEMO_MODE === '1'; res.locals.ADMIN_PW_FROM_ENV = D.ADMIN_PW_FROM_ENV;
+  res.locals.DEMO_MODE = process.env.DEMO_MODE === '1'; res.locals.ADMIN_PW_FROM_ENV = D.ADMIN_PW_FROM_ENV; res.locals.ADMIN_PW_SOURCE = D.ADMIN_PW_SOURCE;
   res.locals.inr = inr; res.locals.fmtDate = fmtDate; res.locals.path = req.path; res.locals.BRAND = BRAND;
   res.locals.baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
   next();
@@ -461,6 +461,36 @@ a.get('/audit', (req, res) => {
   res.render('admin/audit', { title: 'Audit log', rows });
 });
 a.get('/messages', (req, res) => res.render('admin/messages', { title: 'Contact messages', rows: db.prepare('SELECT * FROM contact_messages ORDER BY id DESC').all() }));
+// ---------- one-time admin password-hash tool (only when ADMIN_SETUP_TOKEN is set, >= 24 chars) ----------
+// Never changes any account: it only turns a typed password into a bcrypt hash for the ADMIN_PASSWORD_HASH env var.
+const SETUP_TOKEN = String(process.env.ADMIN_SETUP_TOKEN || '');
+const SETUP_ON = SETUP_TOKEN.length >= 24;
+const setupHits = new Map();
+function setupLimited(ip) {
+  const now = Date.now(); const h = (setupHits.get(ip) || []).filter(t => now - t < 15 * 60 * 1000);
+  h.push(now); setupHits.set(ip, h); return h.length > 30;
+}
+function setupTokenOk(t) {
+  if (typeof t !== 'string') return false;
+  const x = crypto.createHash('sha256').update(t).digest(), y = crypto.createHash('sha256').update(SETUP_TOKEN).digest();
+  return crypto.timingSafeEqual(x, y);
+}
+const setupNotFound = (res) => res.status(404).render('error', { title: 'Page not found', message: 'The page you are looking for does not exist.' });
+function setupHandler(req, res) {
+  if (!SETUP_ON) return setupNotFound(res);
+  res.set('Cache-Control', 'no-store');
+  if (setupLimited(req.ip)) return res.status(429).render('error', { title: 'Too many attempts', message: 'Please wait 15 minutes and try again.' });
+  const token = req.method === 'POST' ? req.body.token : req.query.token;
+  if (!setupTokenOk(token)) return setupNotFound(res); // wrong/missing token looks like "not found"
+  if (req.method === 'GET') return res.render('admin/setup-hash', { title: 'Admin password hash', token, hash: null, error: null });
+  const pw = String(req.body.password || ''), pw2 = String(req.body.confirm || '');
+  let error = pwError(pw, 12);
+  if (!error && pw !== pw2) error = 'Password and confirmation do not match.';
+  if (error) return res.status(400).render('admin/setup-hash', { title: 'Admin password hash', token, hash: null, error });
+  res.render('admin/setup-hash', { title: 'Admin password hash', token, hash: bcrypt.hashSync(pw, 12), error: null });
+}
+app.get('/admin/setup-hash', setupHandler);
+app.post('/admin/setup-hash', setupHandler);
 app.get('/admin/login', (req, res) => res.redirect(req.user && req.user.role === 'admin' ? '/admin' : '/login?next=/admin'));
 app.use('/admin', a);
 

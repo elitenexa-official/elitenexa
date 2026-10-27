@@ -22,9 +22,9 @@
 <meta name="twitter:card" content="summary_large_image">
 </head>
 <%
-  const isAdmin = path.startsWith('/admin');
+  const isAdmin = path.startsWith('/admin') && !!user && user.role === 'admin';
   const memberPaths = ['/dashboard','/profile','/shop','/orders','/team','/wallet'];
-  const isMember = memberPaths.some(p => path === p || path.startsWith(p + '/'));
+  const isMember = !!user && memberPaths.some(p => path === p || path.startsWith(p + '/'));
   const shell = isAdmin ? 'admin' : (isMember ? 'member' : 'public');
 %>
 <body class="shell-<%= shell %>">

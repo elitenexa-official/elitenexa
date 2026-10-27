@@ -1,6 +1,6 @@
 # Render Blueprint – free demo web service for EliteNexa.
 # NOTE: the free plan has no persistent disk, so the SQLite DB (data/) resets on every restart/spin-down.
-# On a fresh DB the app seeds 4 sample products and the 'admin' account (password = ADMIN_PASSWORD).
+# On a fresh DB the app seeds 4 sample products and the 'admin' account (password from ADMIN_PASSWORD_HASH or ADMIN_PASSWORD).
 services:
   - type: web
     name: elitenexa
@@ -24,4 +24,11 @@ services:
       - key: SESSION_SECRET
         generateValue: true
       - key: ADMIN_PASSWORD
+        sync: false
+      # Preferred: bcrypt hash of the admin password (takes precedence over ADMIN_PASSWORD).
+      # Generate it on the site itself at /admin/setup-hash?token=<ADMIN_SETUP_TOKEN>.
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      # Temporary (>= 24 chars): enables /admin/setup-hash. Remove it once ADMIN_PASSWORD_HASH is set.
+      - key: ADMIN_SETUP_TOKEN
         sync: false
